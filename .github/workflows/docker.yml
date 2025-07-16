@@ -81,13 +81,13 @@ jobs:
           set -e
           METADATA="$(docker buildx bake --print | jq -c)"
           {
-            TARGET_KEYS=$(jq -r '.target | keys[]' <<< "${METADATA}" | grep -E '.+-.')
-            TARGETS=$(echo "${TARGET_KEYS}" | cut -d'-' -f1 | sort -u | jq -R . | jq -s .)
-            VARIANTS=$(echo "${TARGET_KEYS}" | cut -d'-' -f2 | sort -u | jq -R . | jq -s .)
+            TARGET_KEYS=$(docker buildx bake --print | jq -r '.target | keys[]' | grep -E '.+-.')
+            VARIANTS=$(echo "${TARGET_KEYS}" | cut -d'-' -f1 | sort -u)
+            TARGETS=$(echo "${TARGET_KEYS}" | cut -d'-' -f2 | sort -u)
             echo metadata="${METADATA}"
             echo platforms="$(jq -c 'first(.target[]) | .platforms' <<< "${METADATA}")"
-            echo "targets=${TARGETS}" >> "${GITHUB_OUTPUT}"
-            echo "variants=${VARIANTS}" >> "${GITHUB_OUTPUT}"
+            echo "targets=$(jq -nc --argjson arr "$(printf '%s\n' $TARGETS | jq -R . | jq -s .)" '$arr')" >> "${GITHUB_OUTPUT}"
+            echo "variants=$(jq -nc --argjson arr "$(printf '%s\n' $VARIANTS | jq -R . | jq -s .)" '$arr')" >> "${GITHUB_OUTPUT}"
           } >> "${GITHUB_OUTPUT}"
         env:
           GIT_HASH: ${{ github.sha }}
@@ -228,7 +228,7 @@ jobs:
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         with:
           registry: docker.io
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          username: ${{ vars.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_PASSWORD }}
 
       - name: Create manifest list and push
