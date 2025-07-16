@@ -182,7 +182,6 @@ jobs:
           METADATA: ${{ steps.build.outputs.metadata }}
 
       - name: Upload ${{ matrix.variant }}-${{ matrix.target }} metadata
-        id: upload-${{ matrix.variant }}-${{ matrix.target }}
         if: fromJson(needs.prepare.outputs.push)
         uses: actions/upload-artifact@v4
         with:
