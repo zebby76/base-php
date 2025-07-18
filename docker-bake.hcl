@@ -30,6 +30,14 @@ variable "PHP_EXT_XDEBUG_VERSION" {
   default = "3.4.2"
 }
 
+variable "GOMPLATE_VERSION" {
+  default = "4.3.3"
+}
+
+variable "WAIT4X_VERSION" {
+  default = "3.5.0"
+}
+
 variable "DOCKER_IMAGE_NAME" {
   default = "zebb76/base-php"
 }
@@ -99,6 +107,8 @@ target "default" {
     PHP_EXT_REDIS_VERSION_ARG = "${PHP_EXT_REDIS_VERSION}"
     PHP_EXT_APCU_VERSION_ARG = "${PHP_EXT_APCU_VERSION}"
     PHP_EXT_XDEBUG_VERSION_ARG = "${PHP_EXT_XDEBUG_VERSION}"
+    GOMPLATE_VERSION_ARG = "${GOMPLATE_VERSION}"
+    WAIT4X_VERSION_ARG = "${WAIT4X_VERSION}"
   }
 
   labels = {
