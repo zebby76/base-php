@@ -4,6 +4,8 @@ function log {
 
 	local level=$1
 	local message=$2
+
+	# shellcheck disable=SC2155
 	local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
 
 	local color_reset="\033[0m"
@@ -39,12 +41,12 @@ function apply-template {
 	TPLDIR=$1
 	OUTDIR=$2
 
-	for f in ${TPLDIR}/*.tmpl; do
-		ff=$(basename $f)
+	for f in "${TPLDIR}"/*.tmpl; do
+		ff=$(basename "$f")
 		if [ -w "$OUTDIR" ]; then
 			gomplate \
-				-f ${TPLDIR}/${ff} \
-				-o ${OUTDIR}/${ff%.tmpl}
+				-f "${TPLDIR}"/"${ff}" \
+				-o "${OUTDIR}"/"${ff%.tmpl}"
 		else
 			log "ERROR" "! Write permission is NOT granted on $OUTDIR ."
 		fi
