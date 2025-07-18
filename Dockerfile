@@ -2,7 +2,11 @@
 ARG PHP_VERSION_ARG
 ARG NODE_VERSION_ARG
 ARG COMPOSER_VERSION_ARG
+ARG GOMPLATE_VERSION_ARG
+ARG WAIT4X_VERSION_ARG
 
+FROM hairyhenderson/gomplate:v${GOMPLATE_VERSION_ARG:-4.3.3}-alpine AS gomplate
+FROM wait4x/wait4x:${WAIT4X_VERSION_ARG:-3.5.0} AS wait-for-it
 FROM composer:${COMPOSER_VERSION_ARG:-2.8.4} AS composer
 FROM node:${NODE_VERSION_ARG:-20}-alpine3.21 AS node
 FROM php:${PHP_VERSION_ARG:-8.4.7}-fpm-alpine3.21 AS fpm-prd
@@ -21,7 +25,9 @@ ENV PHP_INI_SCAN_DIR="/usr/local/etc/php/conf.d:/app/etc/php/conf.d" \
     TMPDIR=/app/tmp \
     PATH=/app/bin:/app/sbin:/usr/local/bin:/usr/bin:$PATH
 
-COPY --from=hairyhenderson/gomplate:stable /gomplate /usr/bin/gomplate
+COPY --from=wait-for-it --chmod=775 --chown=root:root /usr/bin/wait4x /usr/bin/wait4x
+COPY --from=gomplate --chmod=775 --chown=root:root /bin/gomplate /usr/bin/gomplate
+
 COPY --chmod=664 --chown=1001:0 config/php/ /app/config/php/
 COPY --chmod=664 --chown=1001:0 config/supervisor.d/ /app/config/supervisor.d/
 
@@ -41,9 +47,7 @@ RUN mkdir -p /home/default \
              /app/tmp \
              /app/sbin \
     && echo "include=/app/etc/php/php-fpm.d/*.conf" >> /usr/local/etc/php-fpm.conf \
-    && chmod +x /usr/local/bin/apk-list \
-                /usr/local/bin/container-entrypoint \
-                /usr/local/bin/wait-for-it \
+    && chmod +x /usr/local/bin/container-entrypoint \
     && echo "Upgrade all already installed packages ..." \
     && apk upgrade --available \
     && echo "Install and Configure required extra PHP packages ..." \
@@ -376,9 +380,7 @@ RUN mkdir -p /home/default \
              /app/tmp \
              /app/bin \
              /app/sbin \
-    && chmod +x /usr/local/bin/apk-list \
-                /usr/local/bin/container-entrypoint-cli \
-                /usr/local/bin/wait-for-it \
+    && chmod +x /usr/local/bin/container-entrypoint-cli \
     && echo "Upgrade all already installed packages ..." \
     && apk upgrade --available \
     && echo "Install and Configure required extra PHP packages ..." \
