@@ -96,7 +96,8 @@ target "default" {
   target     = "${variant}-${tgt}"
 
   platforms  = [
-    "linux/amd64"
+    "linux/amd64",
+    "linux/arm64"
   ]
 
   args = {
