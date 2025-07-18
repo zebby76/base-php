@@ -362,7 +362,8 @@ ENV PHP_INI_SCAN_DIR="/usr/local/etc/php/conf.d:/app/etc/php/conf.d" \
     TMPDIR=/app/tmp \
     PATH=/app/bin:/app/sbin:/usr/local/bin:/usr/bin:$PATH
 
-COPY --from=hairyhenderson/gomplate:stable /gomplate /usr/bin/gomplate
+COPY --from=wait-for-it --chmod=775 --chown=root:root /usr/bin/wait4x /usr/bin/wait4x
+COPY --from=gomplate --chmod=775 --chown=root:root /bin/gomplate /usr/bin/gomplate
 
 COPY --from=node /usr/lib /usr/lib
 COPY --from=node /usr/local/share /usr/local/share
