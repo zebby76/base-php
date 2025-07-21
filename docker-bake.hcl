@@ -39,7 +39,7 @@ variable "WAIT4X_VERSION" {
 }
 
 variable "DOCKER_IMAGE_NAME" {
-  default = "zebb76/base-php"
+  default = "zebby76/base-php"
 }
 
 variable "DOCKER_IMAGE_VERSION" {
@@ -47,7 +47,7 @@ variable "DOCKER_IMAGE_VERSION" {
 }
 
 variable "DOCKER_IMAGE_LATEST" {
-  default = false
+  default = true
 }
 
 variable "GIT_HASH" {}
