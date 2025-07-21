@@ -1,0 +1,58 @@
+---
+services:
+  php-fpm:
+    build:
+      context: .
+      target: fpm-dev
+
+  php-nginx:
+    build:
+      context: .
+      target: nginx-dev
+
+  php-apache:
+    build:
+      context: .
+      target: apache-dev
+
+  php-fpm-init-volumes:
+    image: docker.io/alpine:latest
+    entrypoint: >
+      /bin/sh -c "
+        sleep 5;
+        cp -rf /test/src/. /vol_app_src
+        cp -rf /test/bin/container-entrypoint.d/. /vol_app_bin
+        exit 0;
+      "
+    volumes:
+      - ./test:/test
+      - php_fpm_app_src:/vol_app_src
+      - php_fpm_app_bin:/vol_app_bin
+
+  php-nginx-init-volumes:
+    image: docker.io/alpine:latest
+    entrypoint: >
+      /bin/sh -c "
+        sleep 5;
+        cp -rf /test/src/. /vol_app_src
+        cp -rf /test/bin/container-entrypoint.d/. /vol_app_bin
+        cp -rf /test/config/nginx/sites-enabled/. /vol_app_cfg
+        exit 0;
+      "
+    volumes:
+      - ./test:/test
+      - php_nginx_app_src:/vol_app_src
+      - php_nginx_app_bin:/vol_app_bin
+      - php_nginx_app_cfg:/vol_app_cfg
+
+  php-apache-init-volumes:
+    image: docker.io/alpine:latest
+    entrypoint: >
+      /bin/sh -c "
+        sleep 5;
+        cp -rf /test/bin/container-entrypoint.d/. /vol_app_bin
+        exit 0;
+      "
+    volumes:
+      - ./test:/test
+      - php_apache_app_bin:/vol_app_bin
