@@ -1,3 +1,7 @@
+group "default" {
+  targets = ["fpm-prd","nginx-prd","apache-prd","cli-prd","fpm-dev","nginx-dev","apache-dev","cli-dev"]
+}
+
 variable "VARIANTS" {
   default = ["fpm", "nginx", "apache", "cli"]
 }
