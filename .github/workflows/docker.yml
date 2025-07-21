@@ -78,7 +78,7 @@ jobs:
         id: matrix
         shell: bash
         run: |
-          set -e
+          set -ex
           # shellcheck disable=SC2046,SC2086
           METADATA="$(docker buildx bake --print | jq -c)"
           {
