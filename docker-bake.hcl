@@ -11,7 +11,7 @@ variable "PHP_VERSION" {
 }
 
 variable "NODE_VERSION" {
-  default = "20"
+  default = "22"
 }
 
 variable "COMPOSER_VERSION" {

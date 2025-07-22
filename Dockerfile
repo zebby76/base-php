@@ -8,7 +8,7 @@ ARG WAIT4X_VERSION_ARG
 FROM hairyhenderson/gomplate:v${GOMPLATE_VERSION_ARG:-4.3.3}-alpine AS gomplate
 FROM wait4x/wait4x:${WAIT4X_VERSION_ARG:-3.5.0} AS wait-for-it
 FROM composer:${COMPOSER_VERSION_ARG:-2.8.4} AS composer
-FROM node:${NODE_VERSION_ARG:-20}-alpine3.22 AS node
+FROM node:${NODE_VERSION_ARG:-22}-alpine3.22 AS node
 FROM php:${PHP_VERSION_ARG:-8.4.10}-fpm-alpine3.22 AS fpm-prd
 
 ARG AWS_CLI_VERSION_ARG
