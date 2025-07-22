@@ -7,7 +7,7 @@ variable "VARIANTS" {
 }
 
 variable "PHP_VERSION" {
-  default = "8.4.7"
+  default = "8.4.8"
 }
 
 variable "NODE_VERSION" {
