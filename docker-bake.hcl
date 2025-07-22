@@ -7,7 +7,7 @@ variable "VARIANTS" {
 }
 
 variable "PHP_VERSION" {
-  default = "8.4.9"
+  default = "8.4.10"
 }
 
 variable "NODE_VERSION" {
@@ -15,11 +15,11 @@ variable "NODE_VERSION" {
 }
 
 variable "COMPOSER_VERSION" {
-  default = "2.8.8"
+  default = "2.8.10"
 }
 
 variable "AWS_CLI_VERSION" {
-  default = "2.22.10"
+  default = "2.27.25"
 }
 
 variable "PHP_EXT_REDIS_VERSION" {
@@ -31,7 +31,7 @@ variable "PHP_EXT_APCU_VERSION" {
 }
 
 variable "PHP_EXT_XDEBUG_VERSION" {
-  default = "3.4.2"
+  default = "3.4.5"
 }
 
 variable "GOMPLATE_VERSION" {
