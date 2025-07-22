@@ -1,12 +1,11 @@
 ---
 services:
-
   nginx:
     image: docker.io/nginx:alpine
     restart: unless-stopped
     ports:
       - 9000:9000
-    command: [nginx, '-g', 'daemon off;']
+    command: [nginx, "-g", "daemon off;"]
     depends_on:
       - php-fpm
     volumes:
@@ -32,7 +31,7 @@ services:
       - CONTAINER_HEAP_PERCENT=${BATS_CONTAINER_HEAP_PERCENT}
       - VARNISH_ENABLED=true
       - VARNISH_VCL_CONF_CUSTOM=${BATS_VARNISH_VCL_CONF_CUSTOM}
-    command: ["/usr/bin/supervisord","-c","/etc/supervisord.conf"]
+    command: ["/usr/bin/supervisord", "-c", "/etc/supervisord.conf"]
     volumes:
       - php_apache_app_bin:/app/bin/container-entrypoint.d
       - php_apache_app_var:/app/var
@@ -63,7 +62,7 @@ services:
       - DB_PASSWORD=${BATS_MARIADB_DB_PASSWORD}
       - DB_NAME=${BATS_MARIADB_DB_NAME}
       - VARNISH_ENABLED=false
-    command: ["/usr/bin/supervisord","-c","/etc/supervisord.conf"]
+    command: ["/usr/bin/supervisord", "-c", "/etc/supervisord.conf"]
     volumes:
       - php_nginx_app_bin:/app/bin/container-entrypoint.d
       - php_nginx_app_var:/app/var
@@ -91,7 +90,7 @@ services:
       - DB_PASSWORD=${BATS_MARIADB_DB_PASSWORD}
       - DB_NAME=${BATS_MARIADB_DB_NAME}
       - VARNISH_ENABLED=false
-    command: ["php-fpm","-F","-R"]
+    command: ["php-fpm", "-F", "-R"]
     volumes:
       - php_fpm_app_etc:/app/etc
       - php_fpm_app_tmp:/app/tmp
