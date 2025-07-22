@@ -9,7 +9,7 @@ FROM hairyhenderson/gomplate:v${GOMPLATE_VERSION_ARG:-4.3.3}-alpine AS gomplate
 FROM wait4x/wait4x:${WAIT4X_VERSION_ARG:-3.5.0} AS wait-for-it
 FROM composer:${COMPOSER_VERSION_ARG:-2.8.4} AS composer
 FROM node:${NODE_VERSION_ARG:-20}-alpine3.21 AS node
-FROM php:${PHP_VERSION_ARG:-8.4.8}-fpm-alpine3.21 AS fpm-prd
+FROM php:${PHP_VERSION_ARG:-8.4.9}-fpm-alpine3.21 AS fpm-prd
 
 ARG AWS_CLI_VERSION_ARG
 ARG PHP_EXT_REDIS_VERSION_ARG
@@ -346,7 +346,7 @@ HEALTHCHECK --start-period=2s --interval=10s --timeout=5s --retries=5 \
 
 CMD ["/usr/bin/supervisord", "-c", "/etc/supervisord.conf"]
 
-FROM php:${PHP_VERSION_ARG:-8.4.8}-cli-alpine3.21 AS cli-prd
+FROM php:${PHP_VERSION_ARG:-8.4.9}-cli-alpine3.21 AS cli-prd
 
 ARG AWS_CLI_VERSION_ARG
 ARG PHP_EXT_REDIS_VERSION_ARG
