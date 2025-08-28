@@ -194,6 +194,8 @@ jobs:
 
       - name: Install buildctl
         run: |
+          mkdir -p $HOME/bin
+          VERSION=0.23.2
           if [[ "$(uname -m)" == "x86_64" ]]; then
             ARCH=amd64
           elif [[ "$(uname -m)" == "aarch64" ]]; then
@@ -203,12 +205,13 @@ jobs:
             exit 1
           fi
 
-          VERSION=0.23.2
           curl -fsSL https://github.com/moby/buildkit/releases/download/v${VERSION}/buildkit-v${VERSION}.linux-${ARCH}.tar.gz \
-            | sudo tar -xz -C /usr/local/bin
+            -o buildkit.tar.gz
 
-          sudo chmod +x /usr/local/bin/buildctl
-          export PATH=$PATH:/usr/local/bin
+          tar -xzf buildkit.tar.gz --strip-components=1 -C $HOME/bin bin/buildctl
+          rm buildkit.tar.gz
+
+          echo "$HOME/bin" >> $GITHUB_PATH
           buildctl --version
 
       - name: Export attestations
