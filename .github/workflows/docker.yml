@@ -167,7 +167,6 @@ jobs:
             ${{ matrix.variant }}-${{ matrix.target }}.cache-from=type=gha,scope=${{ matrix.variant }}-${{ matrix.target }}-${{ needs.prepare.outputs.ref || github.ref }}-${{ matrix.platform }}
             ${{ matrix.variant }}-${{ matrix.target }}.cache-from=type=gha,scope=refs/heads/main-${{ matrix.variant }}-${{ matrix.target }}-${{ matrix.platform }}
             ${{ matrix.variant }}-${{ matrix.target }}.cache-to=type=gha,scope=${{ matrix.variant }}-${{ matrix.target }}-${{ needs.prepare.outputs.ref || github.ref }}-${{ matrix.platform }},ignore-error=true
-            ${{ matrix.variant }}-${{ matrix.target }}.attest-output=type=local,dest=./artifacts/attestations/${{ matrix.variant }}-${{ matrix.target }}
             ${{ fromJson(needs.prepare.outputs.push) && format('*.output=type=image,name={0},push-by-digest=true,name-canonical=true,push=true', env.DOCKER_IMAGE_NAME) || '' }}
         env:
           GIT_HASH: ${{ github.sha }}
@@ -189,14 +188,6 @@ jobs:
         with:
           name: metadata-${{ matrix.variant }}-${{ matrix.target }}-${{ steps.prepare.outputs.sanitized_platform }}-${{ github.sha }}
           path: /tmp/metadata/${{ matrix.variant }}-${{ matrix.target }}/*
-          if-no-files-found: error
-          retention-days: 1
-
-      - name: Upload local attestations
-        uses: actions/upload-artifact@v4
-        with:
-          name: slsa-artifacts-${{ matrix.variant }}-${{ matrix.target }}
-          path: ./artifacts/attestations/${{ matrix.variant }}-${{ matrix.target }}
           if-no-files-found: error
           retention-days: 1
 
@@ -258,12 +249,3 @@ jobs:
           docker buildx imagetools inspect $(jq -cr '.target."${{ matrix.variant }}-${{ matrix.target }}".tags | first' <<< ${METADATA})
         env:
           METADATA: ${{ needs.prepare.outputs.metadata }}
-
-      - name: Upload attestations to existing GitHub Release
-        uses: softprops/action-gh-release@v1
-        with:
-          files: ./artifacts/attestations/${{ matrix.variant }}-${{ matrix.target }}/*
-          tag_name: ${{ github.ref_name }}   # le tag de la release existante
-          overwrite: true                    # si les fichiers existent déjà, les remplacer
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
