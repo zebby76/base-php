@@ -224,8 +224,8 @@ jobs:
             --local dockerfile=. \
             --opt target=${{ matrix.variant }}-${{ matrix.target }} \
             --output type=image,name=smalswebtech/base-php:local,push=false \
-            --cache-from type=local,src=./build-cache/${{ matrix.variant }}-${{ matrix.target }} \
-            --cache-to type=local,dest=./build-cache/${{ matrix.variant }}-${{ matrix.target }},mode=max \
+            --import-cache type=local,src=./build-cache/${{ matrix.variant }}-${{ matrix.target }} \
+            --export-cache type=local,dest=./build-cache/${{ matrix.variant }}-${{ matrix.target }},mode=max \
             --attestations type=provenance,mode=max,output=./artifacts/attestations/${{ matrix.variant }}-${{ matrix.target }}/provenance.jsonl \
             --attestations type=sbom,output=./artifacts/attestations/${{ matrix.variant }}-${{ matrix.target }}/sbom.json
 
