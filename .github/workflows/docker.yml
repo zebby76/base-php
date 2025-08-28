@@ -167,7 +167,7 @@ jobs:
             ${{ matrix.variant }}-${{ matrix.target }}.cache-from=type=gha,scope=${{ matrix.variant }}-${{ matrix.target }}-${{ needs.prepare.outputs.ref || github.ref }}-${{ matrix.platform }}
             ${{ matrix.variant }}-${{ matrix.target }}.cache-from=type=gha,scope=refs/heads/main-${{ matrix.variant }}-${{ matrix.target }}-${{ matrix.platform }}
             ${{ matrix.variant }}-${{ matrix.target }}.cache-to=type=gha,scope=${{ matrix.variant }}-${{ matrix.target }}-${{ needs.prepare.outputs.ref || github.ref }}-${{ matrix.platform }},ignore-error=true
-            ${{ matrix.variant }}-${{ matrix.target }}.cache-to=type=local,dest=./build-cache/${{ matrix.variant }}-${{ matrix.target }},mode=max,ignore-error=true
+            ${{ matrix.variant }}-${{ matrix.target }}.attest-output=type=local,dest=./artifacts/attestations/${{ matrix.variant }}-${{ matrix.target }}
             ${{ fromJson(needs.prepare.outputs.push) && format('*.output=type=image,name={0},push-by-digest=true,name-canonical=true,push=true', env.DOCKER_IMAGE_NAME) || '' }}
         env:
           GIT_HASH: ${{ github.sha }}
@@ -191,43 +191,6 @@ jobs:
           path: /tmp/metadata/${{ matrix.variant }}-${{ matrix.target }}/*
           if-no-files-found: error
           retention-days: 1
-
-      - name: Install buildctl
-        run: |
-          mkdir -p $HOME/bin
-          VERSION=0.24.0-rc1
-          if [[ "$(uname -m)" == "x86_64" ]]; then
-            ARCH=amd64
-          elif [[ "$(uname -m)" == "aarch64" ]]; then
-            ARCH=arm64
-          else
-            echo "Unsupported architecture"
-            exit 1
-          fi
-
-          curl -fsSL https://github.com/moby/buildkit/releases/download/v${VERSION}/buildkit-v${VERSION}.linux-${ARCH}.tar.gz \
-            -o buildkit.tar.gz
-
-          tar -xzf buildkit.tar.gz --strip-components=1 -C $HOME/bin bin/buildctl
-          rm buildkit.tar.gz
-
-          echo "$HOME/bin" >> $GITHUB_PATH
-          $HOME/bin/buildctl --version
-
-      - name: Export attestations
-        if: fromJson(needs.prepare.outputs.provenance)
-        run: |
-          mkdir -p artifacts/attestations
-          $HOME/bin/buildctl build \
-            --frontend dockerfile.v0 \
-            --local context=. \
-            --local dockerfile=. \
-            --opt target=${{ matrix.variant }}-${{ matrix.target }} \
-            --output type=image,name=smalswebtech/base-php:local,push=false \
-            --import-cache type=local,src=./build-cache/${{ matrix.variant }}-${{ matrix.target }} \
-            --export-cache type=local,dest=./build-cache/${{ matrix.variant }}-${{ matrix.target }},mode=max \
-            --attestations type=provenance,mode=max,output=./artifacts/attestations/${{ matrix.variant }}-${{ matrix.target }}/provenance.jsonl \
-            --attestations type=sbom,output=./artifacts/attestations/${{ matrix.variant }}-${{ matrix.target }}/sbom.json
 
       - name: Upload local attestations
         uses: actions/upload-artifact@v4
