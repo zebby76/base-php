@@ -184,12 +184,21 @@ jobs:
 
       - name: Upload ${{ matrix.variant }}-${{ matrix.target }} metadata
         if: fromJson(needs.prepare.outputs.push)
+        id: upload-metadata
         uses: actions/upload-artifact@v4
         with:
           name: metadata-${{ matrix.variant }}-${{ matrix.target }}-${{ steps.prepare.outputs.sanitized_platform }}-${{ github.sha }}
           path: /tmp/metadata/${{ matrix.variant }}-${{ matrix.target }}/*
           if-no-files-found: error
           retention-days: 1
+
+      - uses: actions/attest-build-provenance@v2
+        if: fromJson(needs.prepare.outputs.push)
+        with:
+          show-summary: true
+          subject-name: metadata-${{ matrix.variant }}-${{ matrix.target }}-${{ steps.prepare.outputs.sanitized_platform }}-${{ github.sha }}
+          subject-digest: sha256:${{ steps.upload-metadata.outputs.artifact-digest }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
   # Adapted from https://docs.docker.com/build/ci/github-actions/multi-platform/
   push:
