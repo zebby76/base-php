@@ -192,6 +192,21 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+      - name: Install buildctl
+        run: |
+          if [[ "$(uname -m)" == "x86_64" ]]; then
+            ARCH=amd64
+          elif [[ "$(uname -m)" == "aarch64" ]]; then
+            ARCH=arm64
+          else
+            echo "Unsupported architecture"
+            exit 1
+          fi
+      
+          VERSION=0.23.2
+          curl -fsSL https://github.com/moby/buildkit/releases/download/v${VERSION}/buildkit-v${VERSION}.linux-${ARCH}.tar.gz \
+            | tar -xz -C /usr/local/bin
+
       - name: Export attestations
         if: fromJson(needs.prepare.outputs.provenance)
         run: |
