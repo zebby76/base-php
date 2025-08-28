@@ -194,7 +194,6 @@ jobs:
 
       - name: Install buildctl
         run: |
-          set -x
           mkdir -p $HOME/bin
           VERSION=0.23.2
           if [[ "$(uname -m)" == "x86_64" ]]; then
@@ -213,13 +212,13 @@ jobs:
           rm buildkit.tar.gz
 
           echo "$HOME/bin" >> $GITHUB_PATH
-          buildctl --version
+          $HOME/bin/buildctl --version
 
       - name: Export attestations
         if: fromJson(needs.prepare.outputs.provenance)
         run: |
           mkdir -p artifacts/attestations
-          buildctl build \
+          $HOME/bin/buildctl build \
             --frontend dockerfile.v0 \
             --local context=. \
             --local dockerfile=. \
