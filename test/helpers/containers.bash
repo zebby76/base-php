@@ -49,7 +49,10 @@ function container_inspect {
 function container_assert_healthy {
   local -r container=$1
   shift
-  container_health_state $container
+  # `run` is required: assert_output reads $output, which only a `run` sets.
+  # Calling container_health_state directly left $output from the previous run,
+  # so the assertion checked an unrelated command's output.
+  run container_health_state "$container"
   assert_output -l "healthy"
 }
 
