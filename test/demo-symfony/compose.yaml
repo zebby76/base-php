@@ -17,15 +17,25 @@ services:
       - APP_SECRET=cREiW500NNpj9c6BzzD4KjqaVjEndpyJ
       - APP_LOG_DIR=/app/var/log
       - APP_CACHE_DIR=/app/var/cache
+      - LOGROTATE_DEFAULT_PATH=/var/log/shared/*.log
+      - LOGROTATE_DEFAULT_SIZE_LIMIT=1M
+      - LOGROTATE_DEFAULT_RETENTION=1
       - NGINX_REAL_IP_ENABLED=true
       - NGINX_SOFT_THROTTLE_ENABLED=true
       - NGINX_SOFT_THROTTLE_WHITELIST=172.16.0.0/12
       - NGINX_SOFT_THROTTLE_DRY_RUN_ENABLED=off
       - NGINX_DEFAULT_ACCESS_LOG_PATH=/var/log/shared/symfony.nginx-access.log
       - NGINX_DEFAULT_ACCESS_LOG_FORMAT_NAME=ecs_json
+      # logfmt logs for Alloy (files on the shared volume). nginx access logfmt is added by the
+      # 00_logfmt.conf overlay; here we redirect the nginx error log and both php-fpm logs to files.
+      - NGINX_DEFAULT_ERROR_LOG_PATH=/var/log/shared/symfony.nginx-error.log
+      - PHP_FPM_ACCESS_LOG=/var/log/shared/symfony.php-fpm-access.logfmt.log
+      - "PHP_FPM_ACCESS_FORMAT=rid=%{UNIQUE_ID}e class=%{traffic_class}e src=php-fpm status=%s method=%m uri=%r%Q%q dur_ms=%{milli}d mem_kb=%{kilo}M cpu=%C"
+      - PHP_FPM_ERROR_LOG=/var/log/shared/symfony.php-fpm-error.log
     volumes:
       - ./src/demo:/app:rw
       - ./config/nginx/sites-enabled/zz_web.conf.tmpl:/opt/config/nginx/sites-enabled/zz_web.conf.tmpl:ro
+      - ./config/nginx/sites-enabled/00_logfmt.conf.tmpl:/opt/config/nginx/sites-enabled/00_logfmt.conf.tmpl:ro
       - shared-log:/var/log/shared:rw
       - shared-var-symfony:/app/var:rw
     tmpfs:
@@ -37,7 +47,11 @@ services:
       - traefik.http.routers.php-nginx.rule=HostRegexp(`^((default|demo)\.localhost)$$`)
       - traefik.http.routers.php-nginx.entrypoints=web
       - traefik.http.services.php-nginx.loadbalancer.server.port=9000
-      - prometheus-scrape=false
+      # Scrape nginx's VTS metrics (Prometheus format) from the monitoring server on
+      # :9090/metrics — richer than stub-status (per-status-code, bytes, latency, upstream).
+      - prometheus-scrape=true
+      - prometheus-job=nginx-vts
+      - prometheus-port=9090
       - prometheus.labels.pod=symfony
     mem_limit: 512m
     read_only: true
@@ -86,9 +100,82 @@ services:
     mem_limit: 64m
     read_only: true
 
+  alloy:
+    profiles: [ "symfony" ]
+    image: docker.io/grafana/alloy:latest
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    depends_on:
+      symfony:
+        condition: service_healthy
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.alloy.rule=Host(`alloy.localhost`)
+      - traefik.http.routers.alloy.entrypoints=web
+      - traefik.http.services.alloy.loadbalancer.server.port=12345
+      - prometheus-scrape=false
+    volumes:
+      - ./config/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - shared-log:/var/log/shared:ro
+      - alloy-data:/var/lib/alloy/data:rw
+    mem_limit: 128m
+    read_only: true
+    tmpfs:
+      - /tmp:rw,size=16m
+
+  # —— Load generation (profile "load"; needs demo-infra traefik + symfony up) ——
+  # Crawls the site THROUGH Traefik (Host: demo.localhost) and writes the discovered
+  # GET URLs to config/locust/urls.json, consumed by the locust service below.
+  scraper:
+    profiles: [ "load" ]
+    image: docker.io/python:3.12-slim
+    env_file:
+      - ../.env
+    environment:
+      - TARGET_HOST=http://traefik
+      - SITE_HOST=demo.localhost
+      - OUT=/data/urls.json
+    user: "${LOCUST_UID:-0}"
+    working_dir: /mnt/locust
+    entrypoint: ["python", "/mnt/locust/scrape.py"]
+    volumes:
+      - ./config/locust:/mnt/locust:ro
+      - ./config/locust:/data:rw
+    mem_limit: 256m
+
+  # Replays urls.json under load. Headless is driven by LOCUST_* env injected by the
+  # Makefile (make load / test-load); `make load-ui` runs it as a web UI on :8089.
+  locust:
+    profiles: [ "load" ]
+    image: docker.io/locustio/locust:2.42.0
+    env_file:
+      - ../.env
+    environment:
+      - LOCUST_LOCUSTFILE=/mnt/locust/locustfile.py
+      - LOCUST_HOST=http://traefik
+      - SITE_HOST=demo.localhost
+      - URLS_FILE=/mnt/locust/urls.json
+    volumes:
+      - ./config/locust:/mnt/locust:ro
+    ports:
+      - "8089:8089"
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.locust.rule=Host(`locust.localhost`)
+      - traefik.http.routers.locust.entrypoints=web
+      - traefik.http.services.locust.loadbalancer.server.port=8089
+    mem_limit: 512m
+
 volumes:
   shared-log:
   shared-var-symfony:
+  alloy-data:
 
 networks:
     default:
