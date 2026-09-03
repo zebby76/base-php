@@ -91,6 +91,8 @@ teardown_file() {
   container_clean "${BATS_WEB_CONTAINER}"
   container_clean "${BATS_WEB_CONTAINER}-memory"
   container_clean "${BATS_WEB_CONTAINER}-drain"
+  container_clean "${BATS_WEB_CONTAINER}-logrotate"
+  container_clean "${BATS_WEB_CONTAINER}-failfast"
 }
 
 @test "[$TEST_FILE] The container reports healthy" {
@@ -234,4 +236,85 @@ teardown_file() {
 
   run cat "${BATS_TEST_TMPDIR}/drain"
   assert_output "completed"
+}
+
+# nginx sizes the buffer that has to hold the whole response header at one page
+# by default, so a framework putting a session cookie and a few Link headers on
+# the response overran it and the request failed as a 502.
+@test "[$TEST_FILE] A large response header does not fail the request" {
+  [ "${BATS_VARIANT}" = "nginx" ] || skip "mod_proxy_fcgi caps a header line at 8k and offers no knob"
+
+  web_put "${BATS_WEB_CONTAINER}" big-header.php \
+    <<<'<?php header("X-Big: " . str_repeat("a", 9 * 1024)); echo "ok";'
+
+  run web_status "${BATS_WEB_PORT}" /big-header.php
+  assert_output "200"
+}
+
+# The option list used to be split on whitespace and sorted, so a directive
+# carrying an argument -- "maxage 7" -- reached the stanza as two lines in
+# alphabetical order. logrotate rejects that and skips the whole stanza, which
+# stops every file from being rotated, silently, for the life of the container.
+@test "[$TEST_FILE] A logrotate directive with an argument still rotates" {
+  local -r container="${BATS_WEB_CONTAINER}-logrotate"
+  local port
+
+  port="$(web_container_start "${container}" \
+    --env "LOGROTATE_DEFAULT_OPTIONS=compress;copytruncate;missingok;notifempty;maxage 7" \
+    --env "LOGROTATE_DEFAULT_SIZE_LIMIT=1k")"
+
+  ${BATS_CONTAINER_ENGINE} exec "${container}" sh -c \
+    'head -c 4096 /dev/zero | tr "\0" "x" > /app/var/log/rotate-me.log; /opt/config/sbin/logrotate.sh'
+
+  run ${BATS_CONTAINER_ENGINE} exec "${container}" test -f /app/var/log/rotate-me.log.1.gz
+  assert_success
+}
+
+# The fail-fast listener keyed on the event payload's `expected` field, which
+# reports whether the exit code was in the program's `exitcodes` list -- not
+# whether supervisor asked for the exit. A SIGTERM reaching the php-fpm master
+# from outside supervisor makes it exit 0, so the listener stayed silent and the
+# container kept running with no php-fpm behind the web server.
+@test "[$TEST_FILE] An exit of php-fpm stops the container" {
+  local -r container="${BATS_WEB_CONTAINER}-failfast"
+
+  web_container_start "${container}" >/dev/null
+
+  ${BATS_CONTAINER_ENGINE} exec "${container}" sh -c \
+    'kill -TERM $(supervisorctl -c /opt/etc/supervisord.conf pid php-fpm)'
+
+  # A bounded wait on the state, not `retry`: retry stops as soon as the command
+  # succeeds, and container_running_state succeeds while printing "true".
+  local i
+  for ((i = 0; i < 40; i++)); do
+    [ "$(container_running_state "${container}")" = "false" ] && break
+    sleep .5
+  done
+
+  run container_running_state "${container}"
+  assert_output "false"
+}
+
+# nginx set access_log off inside the PHP location and apache pointed the default
+# vhost logs at /dev/null, so the only trace of a PHP request was php-fpm's own
+# line -- which began "- -", %R being the peer address of a unix socket.
+@test "[$TEST_FILE] A PHP request is logged with the client address" {
+  local -r marker="logged-${RANDOM}"
+
+  web_put "${BATS_WEB_CONTAINER}" "${marker}.php" <<<'<?php echo "ok";'
+  curl --silent --output /dev/null --max-time 20 "http://127.0.0.1:${BATS_WEB_PORT}/${marker}.php"
+
+  run ${BATS_CONTAINER_ENGINE} logs "${BATS_WEB_CONTAINER}"
+  assert_line --regexp "^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3} .*${marker}"
+}
+
+# The apache default vhost discarded everything, so a 404 -- and any 5xx, and the
+# PHP errors mod_proxy_fcgi relays -- left no trace at all.
+@test "[$TEST_FILE] A request that reaches no handler is still logged" {
+  local -r marker="missing-${RANDOM}"
+
+  curl --silent --output /dev/null --max-time 20 "http://127.0.0.1:${BATS_WEB_PORT}/${marker}"
+
+  run ${BATS_CONTAINER_ENGINE} logs "${BATS_WEB_CONTAINER}"
+  assert_line --regexp "^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3} .*${marker}"
 }
