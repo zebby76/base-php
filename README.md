@@ -54,6 +54,52 @@ This approach ensures idempotent initialization, predictable config state, and n
 |----------------------|---------|-------------|
 | `DEBUG` | `false` | Set to `true` to enable `set -x` shell tracing throughout the entire startup sequence. Useful for diagnosing template rendering failures or unexpected variable values. |
 
+### Application startup hooks
+
+A child image can run its own code during startup by dropping files into
+`/opt/bin/container-entrypoint.d`. There are two places to do it, and they run at different moments.
+
+**Late hooks** — `/opt/bin/container-entrypoint.d/*.sh` and `*.php`
+
+They run after every configuration file has been rendered and **before Supervisor starts**, so no
+web server or php-fpm is listening yet. This is where migrations, cache warm-ups and asset builds
+belong. They run as uid `1001`, with `/app` as the working directory, and `.php` files are executed
+with `php -f`.
+
+**Early hooks** — `/opt/bin/container-entrypoint.d/entrypoint.d/*.sh`
+
+They are sourced before the environment is resolved, which makes them the place to set
+`<VARIABLE>_WCMTECH_DEFAULT` values — a default of your own that a runtime environment variable can
+still override. They cannot start services: nothing is rendered yet.
+
+```dockerfile
+COPY --chown=1001:0 migrate.sh /opt/bin/container-entrypoint.d/10-migrate.sh
+```
+
+Three things are worth knowing before writing one.
+
+**They run once per `/app/var` volume, not once per image.** A fingerprint of the hook filenames
+and their contents is written to `/app/var/lock/appinit`; the hooks re-run when that fingerprint
+changes, and are skipped otherwise. On an ephemeral volume — a `tmpfs`, or an `emptyDir` recreated
+with the pod — that means they run at every start. Helper files a hook sources are not part of the
+fingerprint.
+
+**Replicas sharing that volume are serialised.** With `/app/var/lock` on a shared claim, one replica
+runs the hooks while the others wait, then find the marker written and skip. `APP_INIT_LOCK_TIMEOUT`
+bounds the wait; a container that gives up fails its boot rather than run someone else's migration
+alongside them.
+
+**They see the full environment, secrets included.** Hooks run before the entrypoint sanitizes the
+environment, so `SUPERVISOR_XMLRPC_UNIX_SOCKET_PASSWORD`, `AWS_SECRET_ACCESS_KEY` and anything else
+passed to the container are readable. A hook that dumps `env` to a log publishes them.
+
+The `cli` variant does not run late hooks: it has no Supervisor and a shorter entrypoint. A worker
+or cron image built from it has to invoke its initialization itself.
+
+| Environment Variable | Default | Description |
+|----------------------|---------|-------------|
+| `APP_INIT_LOCK_TIMEOUT` | `300` | Seconds a replica waits for another one sharing `/app/var/lock` to finish running the hooks before failing its own boot. |
+
 ## 👷 Supervisor Configuration
 
 | Environment Variable                         | Default (prd)                  | Default (dev)                  | Documentation                                                                        |
@@ -61,7 +107,6 @@ This approach ensures idempotent initialization, predictable config state, and n
 | `SUPERVISOR_XMLRPC_UNIX_SOCKET_ENABLED`      | "true"                         | "true"                         | [Link](https://supervisord.org/api.html#xml-rpc-api-documentation)                   |
 | `SUPERVISOR_XMLRPC_UNIX_SOCKET_PATH`         | "/app/var/run/supervisor.sock" | "/app/var/run/supervisor.sock" | [Link](https://supervisord.org/configuration.html#supervisorctl-section-values)      |
 | `SUPERVISOR_XMLRPC_UNIX_SOCKET_CHMOD`        | "0700"                         | "0700"                         | [Link](https://supervisord.org/configuration.html#unix-http-server-section-settings) |
-| `SUPERVISOR_XMLRPC_UNIX_SOCKET_CHOWN`        | "default:root"                 | "default:root"                 | [Link](https://supervisord.org/configuration.html#unix-http-server-section-settings) |
 | `SUPERVISOR_XMLRPC_UNIX_SOCKET_AUTH_ENABLED` | "true"                         | "true"                         | [Link](https://supervisord.org/configuration.html#supervisorctl-section-values)      |
 | `SUPERVISOR_XMLRPC_UNIX_SOCKET_USERNAME`     | "admin"                        | "admin"                        | [Link](https://supervisord.org/configuration.html#supervisorctl-section-values)      |
 | `SUPERVISOR_XMLRPC_UNIX_SOCKET_PASSWORD`     | "pa55w0rd"                     | "pa55w0rd"                     | [Link](https://supervisord.org/configuration.html#supervisorctl-section-values)      |
@@ -70,6 +115,15 @@ This approach ensures idempotent initialization, predictable config state, and n
 | `SUPERVISOR_XMLRPC_INET_PORT`                | "9744"                         | "9744"                         | [Link](https://supervisord.org/configuration.html#inet-http-server-section-settings) |
 | `SUPERVISOR_XMLRPC_INET_USERNAME`            | "admin"                        | "admin"                        | [Link](https://supervisord.org/configuration.html#inet-http-server-section-settings) |
 | `SUPERVISOR_XMLRPC_INET_PASSWORD`            | "pa55w0rd"                     | "pa55w0rd"                     | [Link](https://supervisord.org/configuration.html#inet-http-server-section-settings) |
+
+> **What the socket credentials do and do not protect.** Everything in the container runs as uid
+> `1001`, php-fpm included, and the socket is owned by that user. An application able to run code
+> can therefore reach Supervisor whatever the password is: the credentials are not a boundary
+> between the application and the process manager, and nothing in this image makes them one. They
+> matter for a sidecar sharing the runtime volume, which is why the rendered files carrying them are
+> written `0600`. Change `SUPERVISOR_XMLRPC_UNIX_SOCKET_PASSWORD` from its default anyway, and
+> change `SUPERVISOR_XMLRPC_INET_PASSWORD` before enabling the INET server — with
+> `SUPERVISOR_XMLRPC_INET_HOST` empty it listens on every interface.
 | `SUPERVISOR_FAIL_FAST_ENABLED`               | "true"                         | "true"                         | see below                                                                            |
 | `SUPERVISOR_FAIL_FAST_PROGRAMS`              | "nginx php-fpm apache"         | "nginx php-fpm apache"         | see below                                                                            |
 
@@ -141,7 +195,14 @@ The table below lists the most commonly overridden PHP core directives. For the 
 
 ### PHP Extensions
 
-All installed extensions are symlinked by default from their actual `.so` locations into this writable directory. Each extension’s activation can be controlled via a corresponding environment variable (e.g., `PHP_APC_ENABLED=false` disables `apcu`). When enabled, the entrypoint also generates the appropriate `.ini` configuration file for the extension within the writable volume.
+All installed extensions are symlinked by default from their actual `.so` locations into this
+writable directory. Each extension’s activation is controlled by a variable built from the
+**extension name**, uppercased: `PHP_APCU_ENABLED=false` disables `apcu`,
+`PHP_XDEBUG_ENABLED=false` disables `xdebug`. When enabled, the entrypoint also generates the
+appropriate `.ini` configuration file for the extension within the writable volume.
+
+Do not confuse `PHP_APCU_ENABLED` with `PHP_APC_ENABLED`: the second is the `apc.enabled` ini
+directive, a different setting.
 
 | Environment Variable        | Extension       | Enabled (prd) | Enabled (dev) | Configuration                        | Documentation                                                               |
 |-----------------------------|-----------------|---------------|---------------|--------------------------------------|-----------------------------------------------------------------------------|
@@ -257,7 +318,8 @@ Nginx is only active in the `nginx-prd` and `nginx-dev` variants. It acts as a r
 | `NGINX_TCP_NOPUSH` | `on` | Send response headers in one packet. |
 | `NGINX_TCP_NODELAY` | `on` | Disable Nagle's algorithm for keepalive connections. |
 | `NGINX_IGNORE_INVALID_HEADERS` | `on` | Ignore headers with invalid names. |
-| `NGINX_CLIENT_MAX_BODY_SIZE` | `1m` | Maximum allowed request body size. |
+| `NGINX_WORKER_PROCESSES` | derived from the CPU limit | Worker count. Defaults to the container's CPU allowance rounded up, or `auto` when no limit is set — nginx's own `auto` counts the _host's_ cores, since a cgroup quota is invisible to it. |
+| `NGINX_CLIENT_MAX_BODY_SIZE` | `2m` | Maximum allowed request body size. Kept in step with PHP's `upload_max_filesize`: set below it and nginx answers 413 before PHP sees the upload. |
 | `NGINX_CLIENT_HEADER_BUFFER_SIZE` | `1k` | Buffer size for reading client request headers. |
 | `NGINX_CLIENT_HEADER_TIMEOUT` | `60s` | Timeout for reading client request headers. |
 | `NGINX_CLIENT_BODY_TIMEOUT` | `60s` | Timeout for reading client request body. |
@@ -309,9 +371,10 @@ Two-zone rate limiting: a global limit for all traffic, and a stricter bot-speci
 
 | Environment Variable | Default | Description |
 |----------------------|---------|-------------|
-| `NGINX_SOFT_THROTTLE_ENABLED` | `false` | Enable rate limiting. |
+| `NGINX_SOFT_THROTTLE_ENABLED` | `false` | Enable rate limiting. Read the note below before turning it on behind a proxy. |
 | `NGINX_SOFT_THROTTLE_DRY_RUN_ENABLED` | `on` | Log rate-limit events without rejecting requests (calibration mode). Disable once limits are tuned. |
 | `NGINX_SOFT_THROTTLE_STATUS_CODE` | `429` | HTTP status code returned when the rate limit is exceeded. |
+| `NGINX_SOFT_THROTTLE_LOG_LEVEL` | `warn` | Level a throttled request is logged at. nginx uses `error` by default, dry-run rejections included. |
 | `NGINX_SOFT_THROTTLE_WHITELIST` | _(empty)_ | Space-separated CIDR ranges that bypass all rate limits (e.g. VPN, monitoring). |
 | `NGINX_SOFT_THROTTLE_GLOBAL_ZONE_SIZE` | `20m` | Shared memory for the global limit zone (~320k IPs per 20m). |
 | `NGINX_SOFT_THROTTLE_GLOBAL_ZONE_RATE` | `20r/s` | Global request rate limit. |
@@ -320,6 +383,13 @@ Two-zone rate limiting: a global limit for all traffic, and a stricter bot-speci
 | `NGINX_SOFT_THROTTLE_BOTS_ZONE_RATE` | `1r/m` | Rate limit applied to detected bots. |
 | `NGINX_SOFT_THROTTLE_BOTS_ZONE_BURST` | `5` | Burst allowance for the bot limit. |
 | `NGINX_SOFT_THROTTLE_BOTS_USER_AGENT` | _(see below)_ | Space-separated list of User-Agent regular expression patterns identifying bots. |
+
+> **Behind a proxy, tune the real IP first.** Both zones key on `$remote_addr`. With
+> `NGINX_REAL_IP_ENABLED=false` — the default — that is the address of whatever connects, which
+> behind an OpenShift router or any ingress is the router itself. Every visitor then shares one
+> bucket, and the global limit of `20r/s` applies to the whole site rather than per client. Enable
+> `NGINX_REAL_IP_ENABLED` and set `NGINX_REAL_IP_TRUSTED_PROXIES` before relying on these limits.
+
 
 Default bot patterns: `googlebot`, `bingbot`, `baiduspider`, `yandexbot`, `duckduckbot`, `semrushbot`, `ahrefsbot`, `python-requests`, `curl`, `wget`, `adsbot-google`, and others.
 
@@ -417,20 +487,33 @@ Requests arriving over a **Unix socket** are always allowed — reaching the soc
 
 ## ☁️ AWS CLI Configuration
 
-AWS CLI v2 is pre-installed in all variants. The entrypoint generates `~/.aws/config` and `~/.aws/credentials` from the variables below, making the CLI immediately usable inside the container without mounting external credential files.
+AWS CLI v2 is pre-installed in all variants. The entrypoint renders `/opt/etc/aws/config` and, when
+both keys are given, `/opt/etc/aws/credentials` — not `~/.aws`, which does not exist here — and the
+CLI is pointed at them through a wrapper on `PATH`. The credentials file is written `0600` and is
+removed when no keys are given, so the default credential chain (IAM role, instance metadata) is not
+shadowed by an empty profile.
 
-> **Security note**: Do not pass `AWS_ACCESS_KEY_ID` or `AWS_SECRET_ACCESS_KEY` as plain environment variables in production. Prefer IAM instance roles, OIDC federation, or secrets management solutions.
+> **The variables below reach the CLI, not your application.** The entrypoint unsets every variable
+> it resolved before handing over, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and
+> `AWS_DEFAULT_REGION` included, so an SDK inside your PHP code finds none of them and falls through
+> to the instance metadata endpoint. Pass credentials to the SDK yourself, point it at
+> `/opt/etc/aws/credentials`, or prefer a role: `AWS_ROLE_ARN` with `AWS_WEB_IDENTITY_TOKEN_FILE`
+> and `AWS_REGION` carry no defaults here and are therefore passed through untouched.
+>
+> **Security note**: do not pass `AWS_ACCESS_KEY_ID` or `AWS_SECRET_ACCESS_KEY` as plain
+> environment variables in production. Prefer IAM instance roles, OIDC federation, or a secrets
+> manager.
 
 | Environment Variable | Default | Description |
 |----------------------|---------|-------------|
 | `AWS_ACCESS_KEY_ID` | `""` | AWS access key ID. |
 | `AWS_SECRET_ACCESS_KEY` | `""` | AWS secret access key. |
 | `AWS_DEFAULT_REGION` | `us-east-1` | Default AWS region for CLI commands. |
-| `AWS_PROFILE` | `default` | Active AWS profile name. |
+| `AWS_PROFILE` | `default` | Name of the profile section written to the rendered files. Only `[default]` is produced, so setting this changes nothing today. |
 | `AWS_DEFAULT_OUTPUT` | `json` | Default output format (`json`, `text`, `table`). |
 | `AWS_CONFIG_FILE` | `/opt/etc/aws/config` | Path to the generated AWS config file. |
 | `AWS_SHARED_CREDENTIALS_FILE` | `/opt/etc/aws/credentials` | Path to the generated AWS credentials file. |
-| `AWS_S3_ENDPOINT_URL` | `https://s3.amazonaws.com` | S3 endpoint URL. Override to use a compatible store (MinIO, LocalStack, etc.). |
+| `AWS_S3_ENDPOINT_URL` | `https://s3.amazonaws.com` | Read by nothing in this image and not written to the rendered configuration. To point the CLI at a compatible store (MinIO, LocalStack), pass the CLI's own `AWS_ENDPOINT_URL_S3`, which the entrypoint leaves untouched. |
 
 ## 📦 Available Docker Image Variants
 

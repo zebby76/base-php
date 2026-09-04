@@ -93,6 +93,9 @@ teardown_file() {
   container_clean "${BATS_WEB_CONTAINER}-drain"
   container_clean "${BATS_WEB_CONTAINER}-logrotate"
   container_clean "${BATS_WEB_CONTAINER}-failfast"
+  container_clean "${BATS_WEB_CONTAINER}-init1"
+  container_clean "${BATS_WEB_CONTAINER}-init2"
+  ${BATS_CONTAINER_ENGINE} volume rm -f "${BATS_WEB_CONTAINER}-lock" "${BATS_WEB_CONTAINER}-log" >/dev/null 2>&1 || true
 }
 
 @test "[$TEST_FILE] The container reports healthy" {
@@ -317,4 +320,98 @@ teardown_file() {
 
   run ${BATS_CONTAINER_ENGINE} logs "${BATS_WEB_CONTAINER}"
   assert_line --regexp "^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3} .*${marker}"
+}
+
+# The TICK_60 subscriber echoed the event header and the payload on every tick,
+# and the listener's stdout -- which is the protocol channel, not a log stream --
+# was captured too, so a RESULT line joined them. Two lines a minute, forever,
+# burying whatever else the container had to say.
+@test "[$TEST_FILE] The tick listener is quiet" {
+  # The assertion only means something once a TICK_60 has fired. The shared
+  # container has been up since setup_file, so by this point that has usually
+  # happened already; wait out whatever is left rather than a flat 60 seconds.
+  local -r started="$(${BATS_CONTAINER_ENGINE} inspect -f '{{.State.StartedAt}}' "${BATS_WEB_CONTAINER}")"
+  local -r uptime=$(( $(date +%s) - $(date -d "${started}" +%s) ))
+
+  [ "${uptime}" -gt 65 ] || sleep $(( 65 - uptime ))
+
+  run ${BATS_CONTAINER_ENGINE} logs "${BATS_WEB_CONTAINER}"
+  refute_line --regexp "eventname:TICK_60"
+  refute_line --regexp "^RESULT [0-9]"
+}
+
+# .js is served as application/javascript, which the gzip_types list omitted --
+# it carried application/x-javascript and text/javascript, neither of which this
+# image ever emits, so no script was ever compressed.
+@test "[$TEST_FILE] Javascript is compressed" {
+  [ "${BATS_VARIANT}" = "nginx" ] || skip "apache compresses application/javascript already"
+
+  web_put "${BATS_WEB_CONTAINER}" app.js <<<"$(head -c 3000 /dev/zero | tr '\0' 'x')"
+
+  run curl --silent --head --header 'Accept-Encoding: gzip' --max-time 20 \
+    "http://127.0.0.1:${BATS_WEB_PORT}/app.js"
+  assert_line --regexp '^[Cc]ontent-[Ee]ncoding: gzip'
+}
+
+# add_header appends, so these locations answered with the Content-Type nginx had
+# already set plus the one they added.
+@test "[$TEST_FILE] Responses carry a single Content-Type" {
+  [ "${BATS_VARIANT}" = "nginx" ] || skip "only the nginx variant has a separate monitoring port"
+
+  run bash -c "curl --silent --head --max-time 20 http://127.0.0.1:${BATS_MONITORING_PORT}/healthcheck | grep -ci '^content-type'"
+  assert_output "1"
+}
+
+# location ~ \.php$ could not match /index.php/fr/blog, so a front controller
+# never received PATH_INFO and the parameters set for it were dead code. apache
+# has always handled this, which left the two variants routing differently.
+@test "[$TEST_FILE] A front controller receives PATH_INFO" {
+  web_put "${BATS_WEB_CONTAINER}" front.php \
+    <<<'<?php echo "path_info=[", $_SERVER["PATH_INFO"] ?? "", "]";'
+
+  run curl --silent --max-time 20 "http://127.0.0.1:${BATS_WEB_PORT}/front.php/fr/blog"
+  assert_output "path_info=[/fr/blog]"
+}
+
+# The other half of accepting path info: a request whose .php does not exist must
+# not fall back to executing the file before it.
+@test "[$TEST_FILE] A path-info request cannot execute a non-PHP file" {
+  web_put "${BATS_WEB_CONTAINER}" uploads/photo.jpg <<<'<?php echo "EXECUTED"; ?>'
+
+  run web_status "${BATS_WEB_PORT}" /uploads/photo.jpg/shell.php
+  assert_output "404"
+}
+
+# The marker said whether the hooks had run, not whether they were running, so
+# replicas sharing the volume it lives on all read it at once, all decided the
+# hooks were pending, and all ran them. A migration hook ran once per replica.
+#
+# Only /app/var/lock and /app/var/log are shared here, which is the realistic
+# scope: sharing /app/var whole makes the two supervisords fight over one RPC
+# socket and the second container never reaches its init scripts.
+@test "[$TEST_FILE] Replicas sharing the init marker run the hooks once" {
+  local -r hook="${BATS_TEST_TMPDIR}/10-slow.sh"
+  local -r lock="${BATS_WEB_CONTAINER}-lock"
+  local -r logs="${BATS_WEB_CONTAINER}-log"
+  local -r image="$(image_tag "${BATS_VARIANT}" "${BATS_TARGET}")"
+  local n
+
+  printf '#!/bin/bash\necho "ran" >> /app/var/log/hook-runs.txt\nsleep 3\n' >"${hook}"
+  chmod +x "${hook}"
+
+  for n in 1 2; do
+    ${BATS_CONTAINER_ENGINE} volume create "${lock}" >/dev/null
+    ${BATS_CONTAINER_ENGINE} volume create "${logs}" >/dev/null
+    ${BATS_CONTAINER_ENGINE} run --pull=never --detach --name "${BATS_WEB_CONTAINER}-init${n}" \
+      --volume "${lock}:/app/var/lock" --volume "${logs}:/app/var/log" \
+      --volume "${hook}:/opt/bin/container-entrypoint.d/10-slow.sh:ro" "${image}" >/dev/null &
+  done
+  wait
+
+  container_wait_for_healthy "${BATS_WEB_CONTAINER}-init1" 60 >/dev/null
+  container_wait_for_healthy "${BATS_WEB_CONTAINER}-init2" 60 >/dev/null
+
+  run ${BATS_CONTAINER_ENGINE} exec "${BATS_WEB_CONTAINER}-init1" \
+    sh -c 'grep -c ran /app/var/log/hook-runs.txt'
+  assert_output "1"
 }
