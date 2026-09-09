@@ -176,6 +176,19 @@ teardown_file() {
   assert_line "allocated 33554432"
 }
 
+# php.ini asks for 30s and 60s. The image rendered 0 and -1 instead -- the CLI
+# SAPI hard-codes those two whatever php.ini says, and the startup probe reads
+# its defaults with `php -r` -- so a web request ran with no time limit at all,
+# the pool leaving request_terminate_timeout at 0 as well.
+#
+# Read through php-fpm, like everything else here and for the same reason: a CLI
+# check reports the CLI's own 0 and -1 and would pass against the defect.
+@test "[$TEST_FILE] A web request keeps the php.ini time limits" {
+  run web_php "${BATS_WEB_CONTAINER}" "${BATS_WEB_PORT}" \
+    '<?php echo "exec=", ini_get("max_execution_time"), " input=", ini_get("max_input_time");'
+  assert_line "exec=30 input=60"
+}
+
 @test "[$TEST_FILE] expose_php stays off" {
   run web_php "${BATS_WEB_CONTAINER}" "${BATS_WEB_PORT}" '<?php echo ini_get("expose_php") ? "on" : "off";'
   assert_line "off"
