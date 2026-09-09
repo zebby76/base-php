@@ -90,6 +90,7 @@ setup_file() {
 teardown_file() {
   container_clean "${BATS_WEB_CONTAINER}"
   container_clean "${BATS_WEB_CONTAINER}-memory"
+  container_clean "${BATS_WEB_CONTAINER}-inienv"
   container_clean "${BATS_WEB_CONTAINER}-drain"
   container_clean "${BATS_WEB_CONTAINER}-logrotate"
   container_clean "${BATS_WEB_CONTAINER}-failfast"
@@ -145,6 +146,28 @@ teardown_file() {
   # The container is removed in teardown_file.
   run web_php "${container}" "${port}" '<?php echo ini_get("memory_limit");'
   assert_line "512M"
+}
+
+# The other half of the override contract, and the half nothing pinned. The
+# variable has to configure php-fpm and then disappear before the application
+# runs -- that is what the _WCMTECH_DEFAULT convention buys: 99-export-vars.sh
+# registers every name it promotes, 99-cleanup-vars.sh unsets them just before
+# supervisord is exec'd. The pool keeps `clear_env = no`, so without that pass
+# the raw value would be sitting in getenv().
+#
+# Both halves are asserted on one line on purpose. A directive that lost its
+# declaration would still be rendered -- gomplate reads the environment either
+# way -- and would start leaking in silence: from the outside, "overridable" and
+# "overridable and leaking" look the same until you ask for both at once.
+@test "[$TEST_FILE] An ini override does not reach the application environment" {
+  local -r container="${BATS_WEB_CONTAINER}-inienv"
+  local port
+
+  port="$(web_container_start "${container}" --env PHP_MEMORY_LIMIT=512M)"
+
+  run web_php "${container}" "${port}" \
+    '<?php echo "limit=", ini_get("memory_limit"), " env=", getenv("PHP_MEMORY_LIMIT") ?: "(absent)";'
+  assert_line "limit=512M env=(absent)"
 }
 
 @test "[$TEST_FILE] A request may allocate up to the configured limit" {
