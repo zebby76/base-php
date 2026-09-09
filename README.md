@@ -81,6 +81,18 @@ Scripts that must exist in **every** variant — the `aws` wrapper, which shadow
 replaced; mount your own configuration under a name the image does not use (for PHP, anything other
 than `base-php-*.ini`) and it is preserved.
 
+### Replacing the startup banner
+
+The ASCII art printed at startup is data, not code: `/opt/config/motd`. Mount your own file there to
+replace it, or an empty one to turn it off — no variable to set.
+
+It is printed through the `print-banner` helper, which breaks up every run of spaces with a no-break
+space. A web console that renders container logs into HTML collapses runs of ordinary spaces and
+turns ASCII art into a single line of debris; this survives that. The substitution fires on runs of
+two spaces and never on a single one, so words keep ordinary spaces between them and the lines stay
+greppable in a log file. Write your banner with plain spaces — the protection is applied at startup,
+to a mounted file exactly as to the image's own.
+
 This layout cleanly separates static and dynamic concerns:
 - the **base image remains immutable**,
 - all runtime configuration and state are confined to the mounts listed above,
@@ -127,7 +139,7 @@ things follow from that:
   which is sourced.
 
 **The entrypoint's helper functions are available**, loaded through `BASH_ENV` before your script
-runs — there is nothing to source. These five are supported, and their names and argument order will
+runs — there is nothing to source. These six are supported, and their names and argument order will
 not change:
 
 | Function | Signature | What it does |
@@ -137,21 +149,25 @@ not change:
 | `require-executable` | `require-executable DIR` | The same plus an execution probe, for a path you render scripts into. Catches a `noexec` mount, which otherwise fails silently. |
 | `apply-template` | `apply-template SRC DEST` | Renders a gomplate template, or every `*.tmpl` in a directory. This is what the entrypoint renders its own configuration with. |
 | `create-symlink` | `create-symlink SRC DEST` | Creates a symlink, replacing one that already points elsewhere. |
+| `print-banner` | `print-banner [FILE]` | Prints a banner from `FILE`, defaulting to the image's own `/opt/config/motd`, protected against a log viewer that collapses runs of spaces. |
 
-`apply-template` is the interesting one for a child image: put your own templates under
-`/opt/config`, render them where you need them, and you get the same writability preflight and the
-same log lines as the rest of the boot.
+`apply-template` and `print-banner` are the interesting ones for a child image: put your own
+templates and your own banner under `/opt/config`, and you get the same writability preflight, the
+same log format, and the same protection against a web console that mangles ASCII art.
 
 ```bash
 #!/bin/bash
+print-banner /opt/config/myapp/motd
 log "INFO" "myapp: rendering the application configuration"
 apply-template /opt/config/myapp/settings.ini.tmpl /opt/etc/myapp/settings.ini
 ```
 
-All four but `log` **return 1 on failure**, which under the hook's `bash -e` ends the hook and so
-stops the boot. That is usually what you want; call them with that in mind on a path that is
-genuinely optional. Anything named with a leading underscore is internal and may change. A `.php`
-hook gets none of this — it has no shell.
+All but `log` **return 1 on failure**, which under the hook's `bash -e` ends the hook and so stops
+the boot. That is usually what you want; call them with that in mind on a path that is genuinely
+optional. `print-banner` is the one exception worth knowing: called with **no argument** it is
+silent when the image ships no banner, because the image's own is optional; called with an explicit
+path it fails loudly, because you meant that file. Anything named with a leading underscore is
+internal and may change. A `.php` hook gets none of this — it has no shell.
 
 Three more things are worth knowing before writing one.
 
