@@ -105,6 +105,7 @@ teardown_file() {
   container_clean "${BATS_WEB_CONTAINER}-hookenv"
   container_clean "${BATS_WEB_CONTAINER}-hookfn"
   container_clean "${BATS_WEB_CONTAINER}-hooktmpl"
+  container_clean "${BATS_WEB_CONTAINER}-banner"
   container_clean "${BATS_WEB_CONTAINER}-port"
   container_clean "${BATS_WEB_CONTAINER}-remoteip"
   container_clean "${BATS_WEB_CONTAINER}-slowlog"
@@ -736,6 +737,51 @@ HOOK
 
   run ${BATS_CONTAINER_ENGINE} exec "${name}" cat /opt/etc/app.conf
   assert_line "memory=${BATS_PHP_MEMORY_LIMIT}"
+}
+
+# The banner mechanism is a helper rather than a block inlined in the two
+# entrypoints, so a child image gets it for free: print-banner protects its own
+# art against a collapsing log viewer without it having to know that no-break
+# spaces, or web consoles, are involved.
+@test "[$TEST_FILE] A child image can print its own banner" {
+  local -r name="${BATS_WEB_CONTAINER}-banner"
+  local -r motd="${BATS_TEST_TMPDIR}/child-motd"
+  local -r hook="${BATS_TEST_TMPDIR}/10-banner.sh"
+  local banner
+
+  printf '  MY APP    v2\n  two  runs  here\n' >"${motd}"
+  printf '#!/bin/bash\nprint-banner /opt/config/child-motd\n' >"${hook}"
+
+  ${BATS_CONTAINER_ENGINE} run --pull=never --detach --name "${name}" \
+    --volume "${motd}:/opt/config/child-motd:ro" \
+    --volume "${hook}:/opt/bin/container-entrypoint.d/10-banner.sh:ro" \
+    "$(image_tag "${BATS_VARIANT}" "${BATS_TARGET}")" >/dev/null
+  container_wait_for_healthy "${name}" 60 >/dev/null
+
+  banner="$(${BATS_CONTAINER_ENGINE} logs "${name}" 2>&1 |
+    sed -e 's/\x1b\[[0-9;]*m//g' -e '/MY APP/,/two/!d')"
+
+  # The child's art is there, and carries no collapsible run of its own.
+  run grep -c 'MY APP' <<<"${banner}"
+  assert_output "1"
+
+  run grep -c '  ' <<<"${banner}"
+  assert_output "0"
+}
+
+# Without an argument the image's own banner is optional -- an image that ships
+# none must still boot. With an explicit path the caller meant it, so a typo has
+# to be an error that names the file rather than a silent no-op.
+@test "[$TEST_FILE] print-banner names a banner file it cannot read" {
+  local -r hook="${BATS_TEST_TMPDIR}/10-nobanner.sh"
+
+  printf '#!/bin/bash\nprint-banner /opt/config/typo-motd\n' >"${hook}"
+
+  run ${BATS_CONTAINER_ENGINE} run --pull=never --rm \
+    --volume "${hook}:/opt/bin/container-entrypoint.d/10-nobanner.sh:ro" \
+    "$(image_tag "${BATS_VARIANT}" "${BATS_TARGET}")"
+  assert_failure
+  assert_output --partial "/opt/config/typo-motd is not readable"
 }
 
 # The endpoints used to live in the application vhost, on the port a Route or a
