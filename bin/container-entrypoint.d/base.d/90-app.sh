@@ -5,6 +5,7 @@ log "INFO" "Running Application configuration script(s) ... ..."
 APP_INIT_DIR="/opt/bin/container-entrypoint.d"
 APP_INIT_LOCK="/app/var/lock/appinit"
 APP_INIT_LOCK_FILE="${APP_INIT_LOCK}.lock"
+APP_INIT_FUNCTIONS="/usr/local/bin/container-entrypoint.d/entrypoint.d/00-functions.sh"
 
 OUTDIR="/app/var/lock"
 
@@ -88,7 +89,22 @@ if [ "$(cat "$APP_INIT_LOCK" 2>/dev/null)" != "$APP_INIT_FINGERPRINT" ]; then
 
 		log "INFO" "- $0: running $APP_INIT_HOOK"
 
-		if "${APP_INIT_CMD[@]}"; then
+		# Sourcing used to hand the hooks this shell's functions along with
+		# everything else. Running them as children took `log` and its siblings
+		# away with the rest, which broke child images that had come to rely on
+		# them -- silently, on upgrade, and only at boot.
+		#
+		# BASH_ENV is read by bash before it runs a non-interactive script, so
+		# the child loads the helpers itself: no fork, no `source` line to write
+		# in every hook, and $0 stays the hook's own path. The assignment is a
+		# command prefix, so it lives only in that command's environment --
+		# neither supervisord nor the application ever sees BASH_ENV. `php -f`
+		# ignores it.
+		#
+		# This gives back the functions, not the scope: the hook is still a
+		# separate process, so `exit 0` still ends the hook rather than the boot
+		# and what it sets still dies with it.
+		if BASH_ENV="$APP_INIT_FUNCTIONS" "${APP_INIT_CMD[@]}"; then
 			log "INFO" "- $0: $APP_INIT_HOOK done"
 		else
 			APP_INIT_STATUS=$?
@@ -110,6 +126,7 @@ fi
 exec {APP_INIT_LOCK_FD}>&-
 
 unset APP_INIT_DIR APP_INIT_LOCK APP_INIT_LOCK_FILE APP_INIT_LOCK_FD APP_INIT_LOCK_WAITED APP_INIT_FINGERPRINT
+unset APP_INIT_FUNCTIONS
 unset APP_INIT_HOOK APP_INIT_CMD APP_INIT_STATUS
 
 true

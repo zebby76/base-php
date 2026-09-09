@@ -103,6 +103,8 @@ teardown_file() {
   container_clean "${BATS_WEB_CONTAINER}-hook0"
   container_clean "${BATS_WEB_CONTAINER}-hooklock"
   container_clean "${BATS_WEB_CONTAINER}-hookenv"
+  container_clean "${BATS_WEB_CONTAINER}-hookfn"
+  container_clean "${BATS_WEB_CONTAINER}-hooktmpl"
   container_clean "${BATS_WEB_CONTAINER}-port"
   container_clean "${BATS_WEB_CONTAINER}-remoteip"
   container_clean "${BATS_WEB_CONTAINER}-slowlog"
@@ -683,6 +685,57 @@ teardown_file() {
 
   run web_php "${name}" "${port}" '<?php echo getenv("HOOK_INJECTED") ?: "(absent)";'
   assert_line "(absent)"
+}
+
+# Sourcing handed the hooks this entrypoint's functions along with everything
+# else. Running them as child processes took the functions away with the rest,
+# and child images had come to use `log` -- so they broke on upgrade, silently,
+# at boot. BASH_ENV hands the functions back without handing back the scope:
+# the assertions above still hold.
+@test "[$TEST_FILE] A late hook can use the entrypoint helper functions" {
+  local -r name="${BATS_WEB_CONTAINER}-hookfn"
+  local -r hook="${BATS_TEST_TMPDIR}/10-helpers.sh"
+
+  cat >"${hook}" <<'HOOK'
+#!/bin/bash
+for helper in log require-writable require-executable apply-template create-symlink; do
+	type "${helper}" >/dev/null 2>&1 || { echo "hook: ${helper} is missing"; exit 1; }
+done
+require-writable /app/tmp
+log "INFO" "hook: the parent helpers are available"
+HOOK
+
+  ${BATS_CONTAINER_ENGINE} run --pull=never --detach --name "${name}" \
+    --volume "${hook}:/opt/bin/container-entrypoint.d/10-helpers.sh:ro" \
+    "$(image_tag "${BATS_VARIANT}" "${BATS_TARGET}")" >/dev/null
+  container_wait_for_healthy "${name}" 60 >/dev/null
+
+  run ${BATS_CONTAINER_ENGINE} logs "${name}"
+  assert_output --partial "hook: the parent helpers are available"
+  refute_output --partial "is missing"
+}
+
+# apply-template is the gomplate wrapper this entrypoint renders its own
+# configuration with, and a hook now gets it too. That is the point of the
+# helpers being available rather than an accident of the mechanism: a child
+# image can render its own templates out of /opt/config -- the mount-in
+# extension point -- with the same writability preflight and the same log lines.
+@test "[$TEST_FILE] A late hook can render its own template with apply-template" {
+  local -r name="${BATS_WEB_CONTAINER}-hooktmpl"
+  local -r hook="${BATS_TEST_TMPDIR}/10-render.sh"
+  local -r tmpl="${BATS_TEST_TMPDIR}/app.conf.tmpl"
+
+  printf 'memory={{ .Env.PHP_MEMORY_LIMIT }}\n' >"${tmpl}"
+  printf '#!/bin/bash\napply-template /opt/config/app.conf.tmpl /opt/etc/app.conf\n' >"${hook}"
+
+  ${BATS_CONTAINER_ENGINE} run --pull=never --detach --name "${name}" \
+    --volume "${tmpl}:/opt/config/app.conf.tmpl:ro" \
+    --volume "${hook}:/opt/bin/container-entrypoint.d/10-render.sh:ro" \
+    "$(image_tag "${BATS_VARIANT}" "${BATS_TARGET}")" >/dev/null
+  container_wait_for_healthy "${name}" 60 >/dev/null
+
+  run ${BATS_CONTAINER_ENGINE} exec "${name}" cat /opt/etc/app.conf
+  assert_line "memory=${BATS_PHP_MEMORY_LIMIT}"
 }
 
 # The endpoints used to live in the application vhost, on the port a Route or a
