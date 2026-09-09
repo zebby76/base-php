@@ -18,14 +18,7 @@ require-writable /app/var
 require-writable /app/tmp
 require-executable /opt/sbin
 
-log "INFO" "  ____                   ____  _   _ ____   "
-log "INFO" " | __ )  __ _ ___  ___  |  _ \| | | |  _ \  "
-log "INFO" " |  _ \ / _\` / __|/ _ \ | |_) | |_| | |_) | "
-log "INFO" " | |_) | (_| \__ \  __/ |  __/|  _  |  __/  "
-log "INFO" " |____/ \__,_|___/\___| |_|   |_| |_|_|     "
-log "INFO" "                                            "
-log "INFO" "  ( Smals WebAgency WcmTech Base Image )    "
-log "INFO" "                                            "
+print-banner
 
 log "INFO" "+---- Configure PHP Container -----"
 
