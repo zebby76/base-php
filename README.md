@@ -112,6 +112,10 @@ They run after every configuration file has been rendered and **before Superviso
 web server or php-fpm is listening yet. This is where migrations, cache warm-ups and asset builds
 belong. They run as uid `1001`, with `/app` as the working directory.
 
+```dockerfile
+COPY --chown=1001:0 migrate.sh /opt/bin/container-entrypoint.d/10-migrate.sh
+```
+
 Each one runs as a **child process** — `.sh` with `bash -e -o pipefail`, `.php` with `php -f`. Three
 things follow from that:
 
@@ -122,17 +126,34 @@ things follow from that:
   hook, nor the application. To put a variable in the application's environment, use an early hook,
   which is sourced.
 
-**Early hooks** — `/opt/bin/container-entrypoint.d/entrypoint.d/*.sh`
+**The entrypoint's helper functions are available**, loaded through `BASH_ENV` before your script
+runs — there is nothing to source. These five are supported, and their names and argument order will
+not change:
 
-They are sourced before the environment is resolved, which makes them the place to set
-`<VARIABLE>_WCMTECH_DEFAULT` values — a default of your own that a runtime environment variable can
-still override. They cannot start services: nothing is rendered yet.
+| Function | Signature | What it does |
+|----------|-----------|--------------|
+| `log` | `log LEVEL MESSAGE` | Writes a line in the container's own format. `LEVEL` is `INFO`, `WARN`, `ERROR` or `DEBUG`. |
+| `require-writable` | `require-writable DIR` | Creates `DIR` and proves it writable with a real write. On failure, logs the reason and the exact mount to add. |
+| `require-executable` | `require-executable DIR` | The same plus an execution probe, for a path you render scripts into. Catches a `noexec` mount, which otherwise fails silently. |
+| `apply-template` | `apply-template SRC DEST` | Renders a gomplate template, or every `*.tmpl` in a directory. This is what the entrypoint renders its own configuration with. |
+| `create-symlink` | `create-symlink SRC DEST` | Creates a symlink, replacing one that already points elsewhere. |
 
-```dockerfile
-COPY --chown=1001:0 migrate.sh /opt/bin/container-entrypoint.d/10-migrate.sh
+`apply-template` is the interesting one for a child image: put your own templates under
+`/opt/config`, render them where you need them, and you get the same writability preflight and the
+same log lines as the rest of the boot.
+
+```bash
+#!/bin/bash
+log "INFO" "myapp: rendering the application configuration"
+apply-template /opt/config/myapp/settings.ini.tmpl /opt/etc/myapp/settings.ini
 ```
 
-Three things are worth knowing before writing one.
+All four but `log` **return 1 on failure**, which under the hook's `bash -e` ends the hook and so
+stops the boot. That is usually what you want; call them with that in mind on a path that is
+genuinely optional. Anything named with a leading underscore is internal and may change. A `.php`
+hook gets none of this — it has no shell.
+
+Three more things are worth knowing before writing one.
 
 **They run once per `/app/var` volume, not once per image.** A fingerprint of the hook filenames
 and their contents is written to `/app/var/lock/appinit`; the hooks re-run when that fingerprint
@@ -151,6 +172,29 @@ passed to the container are readable. A hook that dumps `env` to a log publishes
 
 The `cli` variant does not run late hooks: it has no Supervisor and a shorter entrypoint. A worker
 or cron image built from it has to invoke its initialization itself.
+
+**Early hooks** — `/opt/bin/container-entrypoint.d/entrypoint.d/*.sh`
+
+They are sourced rather than run as a child, before the environment is resolved, which makes them the
+place to set `<VARIABLE>_WCMTECH_DEFAULT` values — a default of your own that a runtime environment
+variable can still override. They cannot start services: nothing is rendered yet. They are loaded at
+one fixed point in the sequence whatever you name them, so your own numbering cannot land after the
+defaults have been resolved.
+
+**What crosses into the application, and what does not:**
+
+| Set in | How | Seen by a late hook | Seen by the application |
+|--------|-----|---------------------|-------------------------|
+| Early hook | `FOO_WCMTECH_DEFAULT=x` | Yes, under the name `FOO` | **No** — unset just before the exec |
+| Early hook | `export FOO=x` | Yes | **Yes** |
+| Early hook | `FOO=x`, not exported | No | No |
+| Late hook | Anything at all | — | No, it dies with the hook's process |
+
+Two things follow that are easy to get wrong. `<VARIABLE>_WCMTECH_DEFAULT` only means anything in an
+early hook: the defaults are resolved before the late hooks run, so the suffix does nothing there —
+it is a plain variable with a long name. And an exported variable is the only thing that reaches the
+application, which is why the suffix is the right tool for a value the entrypoint needs and the
+application must not see.
 
 | Environment Variable | Default | Description |
 |----------------------|---------|-------------|
