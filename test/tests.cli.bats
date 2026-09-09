@@ -121,3 +121,47 @@ teardown_file() {
   assert_line "[profile ci]"
   assert_line "[ci]"
 }
+
+# The banner is drawn with runs of spaces, and a web console that renders its
+# logs into HTML collapses every run to a single space: the art arrived as a
+# line of debris. Measured on the production OpenShift console -- the QA one
+# does not collapse, which is why this went unnoticed for so long.
+#
+# Every run is now broken up with a no-break space, which no renderer collapses.
+# The assertion is the property itself, testable without a console: no two
+# consecutive ASCII spaces anywhere in the banner.
+@test "[$TEST_FILE] The startup banner survives a space-collapsing log viewer" {
+  local banner
+
+  banner="$(${BATS_CONTAINER_ENGINE} run --pull=never --rm "${BATS_CLI_IMAGE}" true 2>&1 |
+    sed -e 's/\x1b\[[0-9;]*m//g' -e '/Configure PHP Container/,$d')"
+
+  run grep -c '  ' <<<"${banner}"
+  assert_output "0"
+}
+
+# The counterpart of the assertion above, and the reason the fill character is a
+# no-break space rather than a zero-width one: the substitution fires on runs of
+# two spaces and never on a single one, so the words keep ordinary ASCII spaces
+# between them and the line stays greppable in a log file. A zero-width space
+# would have survived the console too -- and silently broken this.
+@test "[$TEST_FILE] The banner text is still greppable with ordinary spaces" {
+  run ${BATS_CONTAINER_ENGINE} run --pull=never --rm "${BATS_CLI_IMAGE}" true
+  assert_output --partial "Smals WebAgency WcmTech Base Image"
+}
+
+# print-banner reads /opt/config/motd, which is a mount point like everything
+# else under /opt/config. An empty file is how an operator turns the banner off:
+# it must print nothing and must not fail the boot, since it runs under `set -e`.
+@test "[$TEST_FILE] An empty banner file prints nothing and does not stop the boot" {
+  local -r empty="${BATS_TEST_TMPDIR}/motd"
+
+  : >"${empty}"
+
+  run ${BATS_CONTAINER_ENGINE} run --pull=never --rm \
+    --volume "${empty}:/opt/config/motd:ro" \
+    "${BATS_CLI_IMAGE}" php -r 'echo "started";'
+  assert_success
+  assert_output --partial "started"
+  refute_output --partial "Smals WebAgency"
+}

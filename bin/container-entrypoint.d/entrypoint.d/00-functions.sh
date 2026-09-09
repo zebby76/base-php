@@ -171,4 +171,39 @@ function create-symlink {
 
 }
 
+# Prints a banner, protected against a web console that renders logs into HTML.
+# There a *run* of spaces collapses to a single one and the art falls apart --
+# measured on the production console, while the QA one leaves it alone.
+# Alternating a real space with a no-break space breaks up every run, so there is
+# nothing left to collapse, and the cell count does not move.
+#
+# It fires on two spaces and never on one, so words stay separated by ordinary
+# ASCII spaces and the line remains greppable in a log file. That is what rules a
+# zero-width character out here: it would survive the console too, invisibly, and
+# would take `grep "Smals WebAgency"` down with it.
+#
+# FILE defaults to the image's own banner and is optional in that case. A child
+# image passes its own path, and then an unreadable file is an error rather than
+# a silent no-op. An empty file prints nothing -- that is how a banner is turned
+# off, no knob needed.
+function print-banner {
+
+	local file=${1:-/opt/config/motd}
+	local content
+
+	if [ ! -r "$file" ]; then
+		[ $# -eq 0 ] && return 0
+		log "ERROR" "! Banner file ${file} is not readable."
+		return 1
+	fi
+
+	# $(<file) is read by bash itself: no subprocess, unlike $(cat file).
+	content=$(<"$file")
+	[ -n "$content" ] || return 0
+
+	# Raw UTF-8 bytes rather than \u escapes, so this does not depend on the locale.
+	printf '\033[32m%s\033[0m\n\n' "${content//  /$' \xc2\xa0'}"
+
+}
+
 true
