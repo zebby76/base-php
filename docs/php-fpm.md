@@ -65,11 +65,37 @@ Kubernetes and OpenShift default `terminationGracePeriodSeconds` to 30 and need 
 | `pm.max_requests`                          | `PHP_FPM_PM_MAX_REQUESTS`                          | `0`               | `0`               | [Link](https://www.php.net/manual/en/install.fpm.configuration.php)                        |
 | `catch_workers_output`                     | `PHP_FPM_CATCH_WORKERS_OUTPUT`                     | `yes`             | `yes`             | [Link](https://www.php.net/manual/en/install.fpm.configuration.php)                        |
 | `decorate_workers_output`                  | `PHP_FPM_DECORATE_WORKERS_OUTPUT`                  | `no`              | `no`              | [Link](https://www.php.net/manual/en/install.fpm.configuration.php)                        |
-| `request_terminate_timeout`                | `PHP_FPM_REQUEST_TERMINATE_TIMEOUT`                | `0`               | `0`               | [Link](https://www.php.net/manual/en/install.fpm.configuration.php)                        |
+| `request_terminate_timeout`                | `PHP_FPM_REQUEST_TERMINATE_TIMEOUT`                | `75s`             | `75s`             | [Link](https://www.php.net/manual/en/install.fpm.configuration.php)                        |
 | `request_terminate_timeout_track_finished` | `PHP_FPM_REQUEST_TERMINATE_TIMEOUT_TRACK_FINISHED` | `no`              | `no`              | [Link](https://www.php.net/manual/en/install.fpm.configuration.php)                        |
 | `request_slowlog_timeout`                  | `PHP_FPM_REQUEST_SLOWLOG_TIMEOUT`                  | `0`               | `0`               | [Link](https://www.php.net/manual/en/install.fpm.configuration.php)                        |
 | `request_slowlog_trace_depth`              | `PHP_FPM_REQUEST_SLOWLOG_TRACE_DEPTH`              | `20`              | `20`              | [Link](https://www.php.net/manual/en/install.fpm.configuration.php)                        |
-| `slowlog`                                  | `PHP_FPM_SLOWLOG`                                  | `/app/var/log/php-fpm.log.slow` | `/app/var/log/php-fpm.log.slow` | [Link](https://www.php.net/manual/en/install.fpm.configuration.php) |
+| `slowlog`                                  | `PHP_FPM_SLOWLOG`                                  | `/app/var/log/php-fpm-slow.log` | `/app/var/log/php-fpm-slow.log` | [Link](https://www.php.net/manual/en/install.fpm.configuration.php) |
+
+#### Bounding a stuck request
+
+Two timers are involved and they do not cover the same thing.
+
+`max_execution_time` is PHP's own, and it counts only the time PHP spends running. On Unix a
+blocking system call is not counted, so a query waiting on a database, a call to a dead upstream or
+a read from a slow mount is not bounded by it at all:
+
+| setup | result |
+|---|---|
+| `max_execution_time=5`, `request_terminate_timeout=0`, script in `sleep(20)` | HTTP 200 after **20.04s** |
+| `max_execution_time=5`, `request_terminate_timeout=5`, same script | HTTP 502 after **5.33s** |
+
+The worker is not released when the caller gives up either. A script that writes nothing never
+notices the disconnection: with the timeout at `0`, php-fpm still reported the process as active 25s
+after the client had been interrupted at 3s.
+
+`request_terminate_timeout` is php-fpm's, and it is the only one that covers those cases. It
+defaults to `75s` here, just above nginx's `fastcgi_read_timeout` (65s) and apache's `Timeout` (60s):
+a request still running then has already failed for its caller, so raising the default costs nothing
+observable and returns the worker to the pool. Raise it together with the web server's own timeout
+if your application genuinely needs longer.
+
+`request_terminate_timeout_track_finished` stays `no`, so work done after `fastcgi_finish_request()`
+— a Symfony `kernel.terminate`, for instance — is not counted against the timeout.
 
 ### Deprecated variables
 
