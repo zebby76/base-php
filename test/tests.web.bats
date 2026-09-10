@@ -90,6 +90,8 @@ setup_file() {
 teardown_file() {
   container_clean "${BATS_WEB_CONTAINER}"
   container_clean "${BATS_WEB_CONTAINER}-memory"
+  container_clean "${BATS_WEB_CONTAINER}-inienv"
+  container_clean "${BATS_WEB_CONTAINER}-blocked"
   container_clean "${BATS_WEB_CONTAINER}-drain"
   container_clean "${BATS_WEB_CONTAINER}-logrotate"
   container_clean "${BATS_WEB_CONTAINER}-failfast"
@@ -147,10 +149,80 @@ teardown_file() {
   assert_line "512M"
 }
 
+# The other half of the override contract, and the half nothing pinned. The
+# variable has to configure php-fpm and then disappear before the application
+# runs -- that is what the _WCMTECH_DEFAULT convention buys: 99-export-vars.sh
+# registers every name it promotes, 99-cleanup-vars.sh unsets them just before
+# supervisord is exec'd. The pool keeps `clear_env = no`, so without that pass
+# the raw value would be sitting in getenv().
+#
+# Both halves are asserted on one line on purpose. A directive that lost its
+# declaration would still be rendered -- gomplate reads the environment either
+# way -- and would start leaking in silence: from the outside, "overridable" and
+# "overridable and leaking" look the same until you ask for both at once.
+@test "[$TEST_FILE] An ini override does not reach the application environment" {
+  local -r container="${BATS_WEB_CONTAINER}-inienv"
+  local port
+
+  port="$(web_container_start "${container}" --env PHP_MEMORY_LIMIT=512M)"
+
+  run web_php "${container}" "${port}" \
+    '<?php echo "limit=", ini_get("memory_limit"), " env=", getenv("PHP_MEMORY_LIMIT") ?: "(absent)";'
+  assert_line "limit=512M env=(absent)"
+}
+
 @test "[$TEST_FILE] A request may allocate up to the configured limit" {
   run web_php "${BATS_WEB_CONTAINER}" "${BATS_WEB_PORT}" \
     '<?php $b = str_repeat("x", 32 * 1024 * 1024); echo "allocated ", strlen($b);'
   assert_line "allocated 33554432"
+}
+
+# php.ini asks for 30s and 60s. The image rendered 0 and -1 instead -- the CLI
+# SAPI hard-codes those two whatever php.ini says, and the startup probe reads
+# its defaults with `php -r` -- so a web request ran with no time limit at all,
+# the pool leaving request_terminate_timeout at 0 as well.
+#
+# Read through php-fpm, like everything else here and for the same reason: a CLI
+# check reports the CLI's own 0 and -1 and would pass against the defect.
+@test "[$TEST_FILE] A web request keeps the php.ini time limits" {
+  run web_php "${BATS_WEB_CONTAINER}" "${BATS_WEB_PORT}" \
+    '<?php echo "exec=", ini_get("max_execution_time"), " input=", ini_get("max_input_time");'
+  assert_line "exec=30 input=60"
+}
+
+# The other timer, and the only one that covers a request PHP cannot stop by
+# itself. max_execution_time counts the time PHP spends running; on Unix a
+# blocking system call is not counted, so a query waiting on a database or a
+# call to a dead upstream ran unbounded. Measured with the timeout at 0: a
+# script in sleep(20) answered 200 after 20.04s, and php-fpm still reported the
+# worker as active 25s after the caller had been interrupted at 3s.
+@test "[$TEST_FILE] The pool bounds a request that PHP cannot time out" {
+  run ${BATS_CONTAINER_ENGINE} exec "${BATS_WEB_CONTAINER}" \
+    sed -n 's/^request_terminate_timeout *= *//p' /opt/etc/php/php-fpm.d/base-php.conf
+  assert_output "75s"
+}
+
+# The default is 75s, above nginx's own 65s, so asserting it end to end would
+# cost the suite more than a minute of sleeping. The mechanism is the same at
+# 3s, and this also pins that the knob still reaches the pool.
+@test "[$TEST_FILE] A request blocked in a system call is terminated" {
+  local -r name="${BATS_WEB_CONTAINER}-blocked"
+  local port start elapsed
+
+  port="$(web_container_start "${name}" --env PHP_FPM_REQUEST_TERMINATE_TIMEOUT=3s)"
+
+  ${BATS_CONTAINER_ENGINE} exec -i "${name}" \
+    sh -c 'cat > /app/var/www/html/blocked.php' <<<'<?php sleep(20); echo "finished";'
+
+  start=${SECONDS}
+  run curl --silent --output /dev/null --write-out '%{http_code}' --max-time 30 \
+    "http://127.0.0.1:${port}/blocked.php"
+
+  # nginx reports the dead FastCGI peer as 502, apache's mod_proxy_fcgi as 503.
+  assert_output --regexp '^(502|503)$'
+
+  elapsed=$((SECONDS - start))
+  [ "${elapsed}" -lt 10 ]
 }
 
 @test "[$TEST_FILE] expose_php stays off" {

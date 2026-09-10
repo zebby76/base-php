@@ -45,7 +45,24 @@ fi
 PHP_FPM_CATCH_WORKERS_OUTPUT_WCMTECH_DEFAULT="yes"
 PHP_FPM_DECORATE_WORKERS_OUTPUT_WCMTECH_DEFAULT="no"
 
-PHP_FPM_REQUEST_TERMINATE_TIMEOUT_WCMTECH_DEFAULT="0"
+# The backstop for a request PHP cannot stop by itself. max_execution_time only
+# counts time PHP spends running: on Unix it does not count a blocking system
+# call, so a query waiting on a database, a dead upstream or a slow mount runs
+# for as long as it likes. Measured with max_execution_time=5 and a script in
+# sleep(20): HTTP 200 after 20.04s. The same script with this timeout at 5s is
+# cut at 5.33s.
+#
+# Worse, the worker is not released when the client goes away. A script that
+# writes nothing never notices the disconnection, so with this at 0 the slot
+# stayed busy: measured 25s after the client was interrupted at 3s, php-fpm
+# still reported the process as active. nginx gives up at 65s and apache at 60s
+# -- the caller has its 504 long before the worker stops squatting a pool of 40.
+#
+# 75s sits just above both, which is what makes it safe: any request still
+# running at that point has already failed for its caller, so nothing
+# observable changes and the worker comes back. An application that genuinely
+# needs longer raises this and the web server's own timeout together.
+PHP_FPM_REQUEST_TERMINATE_TIMEOUT_WCMTECH_DEFAULT="75s"
 PHP_FPM_REQUEST_TERMINATE_TIMEOUT_TRACK_FINISHED_WCMTECH_DEFAULT="no"
 PHP_FPM_REQUEST_SLOWLOG_TIMEOUT_WCMTECH_DEFAULT="0"
 PHP_FPM_REQUEST_SLOWLOG_TRACE_DEPTH_WCMTECH_DEFAULT="20"

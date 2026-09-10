@@ -90,8 +90,25 @@ PHP_UPLOAD_TMP_DIR_WCMTECH_DEFAULT="${PHP_UPLOAD_TMP_DIR_INI_DEFAULT_VALUE:-$PHP
 
 PHP_MAX_INPUT_NESTING_LEVEL_WCMTECH_DEFAULT="${PHP_MAX_INPUT_NESTING_LEVEL_INI_DEFAULT_VALUE:-$PHP_MAX_INPUT_NESTING_LEVEL_FIX_DEFAULT_VALUE}"
 PHP_MAX_INPUT_VARS_WCMTECH_DEFAULT="${PHP_MAX_INPUT_VARS_INI_DEFAULT_VALUE:-$PHP_MAX_INPUT_VARS_FIX_DEFAULT_VALUE}"
-PHP_MAX_EXECUTION_TIME_WCMTECH_DEFAULT="${PHP_MAX_EXECUTION_TIME_INI_DEFAULT_VALUE:-$PHP_MAX_EXECUTION_TIME_FIX_DEFAULT_VALUE}"
-PHP_MAX_INPUT_TIME_WCMTECH_DEFAULT="${PHP_MAX_INPUT_TIME_INI_DEFAULT_VALUE:-$PHP_MAX_INPUT_TIME_FIX_DEFAULT_VALUE}"
+# These two skip the probed value on purpose. The probe reads its defaults with
+# `php -r`, and the CLI SAPI hard-codes max_execution_time to 0 and
+# max_input_time to -1 whatever php.ini says -- measured: php.ini asks for 30
+# and 60, the probe returns 0 and -1, and a non-empty probe result always wins
+# over the fixed default. So the web variants rendered `max_execution_time = 0`
+# and were served with no time limit at all, the pool leaving
+# request_terminate_timeout at 0 as well: a runaway request held its worker for
+# as long as it liked.
+#
+# They are the only two of the six directives the CLI hard-codes that php.ini
+# also sets. output_buffering, implicit_flush and html_errors are neither probed
+# nor rendered, and the CLI's register_argc_argv=0 happens to match what PHP
+# applies outside that SAPI.
+#
+# The cli variant is unaffected: the same hard-coding beats an ini file too, so
+# a CLI script keeps its unlimited execution time -- verified by pointing
+# PHP_INI_SCAN_DIR at a directory setting both, which changed nothing.
+PHP_MAX_EXECUTION_TIME_WCMTECH_DEFAULT="$PHP_MAX_EXECUTION_TIME_FIX_DEFAULT_VALUE"
+PHP_MAX_INPUT_TIME_WCMTECH_DEFAULT="$PHP_MAX_INPUT_TIME_FIX_DEFAULT_VALUE"
 
 # Core Error Handling and Logging
 
