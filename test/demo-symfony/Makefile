@@ -18,7 +18,7 @@ CURRENT_HOMEDIR               := $${HOME}
 CURRENT_DIR                   := $(shell pwd)
 
 DEMO_DIR                       = ${CURRENT_DIR}/src/demo
-DEMO_REPO                      = git@github.com:symfony/demo.git
+DEMO_REPO                      = https://github.com/symfony/demo.git
 DEMO_REF                       = v3.0.1
 
 BUILDER_WORKING_DIR            = /app
@@ -29,16 +29,58 @@ COMPOSER_UPDATE_CMDLINE        = "composer -vvv update --no-interaction --no-sug
 COMPOSER_DIAGNOSE_CMDLINE      = "composer -vvv diagnose --no-interaction --no-scripts"
 COMPOSER_SELF_UPDATE_CMDLINE   = "composer -vvv self-update --no-interaction"
 
-NPM_CONFIG_CMDLINE             = "npm config set cafile=/etc/ssl/certs/ca-certificates.crt && npm config set strict-ssl=false"
-NPM_INSTALL_CMDLINE            = "npm install --prefix /app/src/elasticms/vendor/elasticms/admin-ui-bundle/assets"
-NPM_RUN_BUILD_CMDLINE          = "npm --prefix /app/src/elasticms/vendor/elasticms/admin-ui-bundle/assets run build"
-
 DEMO_SASS_BUILD_CMDLINE        = "php bin/console sass:build"
 DEMO_IMPORTMAP_INSTALL_CMDLINE = "php bin/console importmap:install"
 
-EXEC_DEMO		               = docker compose --env-file=../.env exec --user $(CURRENT_UID) symfony
+EXEC_DEMO		               = $(DOCKER_COMPOSE) exec --user $(CURRENT_UID) symfony
 
 BATS                           = bats -t -j 1
+
+# —— Corporate proxy / custom CA ——————————————————————————————————————————————————————————————————————————————————————
+#
+# Nothing here takes effect unless the calling environment asks for it, so a run
+# with direct internet access (CI, a plain workstation) is unchanged.
+#
+# Proxy: HTTP(S)_PROXY / NO_PROXY are passed through to the one-shot builder
+# containers (DOCKER_PROXY_ARGS) and, through compose.proxy.yaml, to the symfony
+# service, whose `configure` step downloads dart-sass and the importmap packages.
+#
+# CA: CUSTOM_CA_BUNDLE (an absolute path) is ADDED to the image's own trust store,
+# never substituted for it -- the semantics of the ca-bundle stage of the image
+# build. The combined bundle is written to .cache/ and mounted over the system
+# bundle of the builder containers (DOCKER_CA_ARGS) and, through compose.ca.yaml,
+# of the symfony service.
+#
+# COMPOSE_FILE is exported so that every compose call -- start, stop, exec, the
+# load profile and the bats helpers -- sees the same set of files.
+
+DOCKER_PROXY_ARGS := \
+	--env HTTP_PROXY --env HTTPS_PROXY --env NO_PROXY \
+	--env http_proxy --env https_proxy --env no_proxy
+
+COMPOSE_FILE                  := compose.yaml:compose.override.yaml
+
+ifneq ($(strip $(HTTP_PROXY)$(HTTPS_PROXY)$(http_proxy)$(https_proxy)),)
+COMPOSE_FILE                  := $(COMPOSE_FILE):compose.proxy.yaml
+endif
+
+ifneq ($(strip $(CUSTOM_CA_BUNDLE)),)
+CA_RUNTIME_BUNDLE             := $(CURRENT_DIR)/.cache/ca-bundle.pem
+CA_PREREQ                     := $(CA_RUNTIME_BUNDLE)
+DOCKER_CA_ARGS                := --volume $(CA_RUNTIME_BUNDLE):/etc/ssl/certs/ca-certificates.crt:ro
+COMPOSE_FILE                  := $(COMPOSE_FILE):compose.ca.yaml
+export CA_RUNTIME_BUNDLE
+
+# Rebuilt whenever the custom CA changes, since it is the prerequisite.
+$(CA_RUNTIME_BUNDLE): $(CUSTOM_CA_BUNDLE)
+	@mkdir -p $(@D)
+	@docker run --rm --entrypoint cat $(BUILDER_DOCKER_IMAGE_NAME) /etc/ssl/certs/ca-certificates.crt > $@.tmp
+	@cat $(CUSTOM_CA_BUNDLE) >> $@.tmp
+	@mv $@.tmp $@
+	@echo "CA bundle: $(CUSTOM_CA_BUNDLE) added to the image trust store -> $@"
+endif
+
+export COMPOSE_FILE
 
 # —— Load generation ——————————————————————————————————————————————————————————————————————————————————————————————————
 
@@ -62,7 +104,7 @@ configure:
 
 # —— Docker ———————————————————————————————————————————————————————————————————————————————————————————————————————————
 
-start:
+start: $(CA_PREREQ)
 	@$(DOCKER_COMPOSE) --profile=symfony up -d
 
 stop:
@@ -78,8 +120,12 @@ clone:
 		git clone $(DEMO_REPO) $(DEMO_DIR); \
 	fi
 
-update: 
+# The demo used to be cloned over SSH, which an HTTP(S) proxy cannot carry, and a
+# clone keeps the URL it was made with. Re-pointing origin every time moves an
+# existing clone to HTTPS too, so the fetch below goes through the proxy.
+update:
 	@$(MAKE) clone
+	@git -C $(DEMO_DIR) remote set-url origin $(DEMO_REPO)
 	@echo "Fetching $(DEMO_REF)..."
 	cd $(DEMO_DIR) && git fetch origin $(DEMO_REF) --depth 1
 
@@ -91,7 +137,7 @@ reset:
 	git reset --hard FETCH_HEAD
 
 clean:
-	rm -rf $(DEMO_DIR)
+	rm -rf $(DEMO_DIR) $(CURRENT_DIR)/.cache
 
 info:
 	@if [ -d "$(DEMO_DIR)/.git" ]; then \
@@ -118,7 +164,7 @@ info:
 
 # —— Composer —————————————————————————————————————————————————————————————————————————————————————————————————————————
 
-composer-diagnose:
+composer-diagnose: $(CA_PREREQ)
 	@echo "\n-- Running Composer diagnose --\n"
 	@docker run \
 		--env PHP_BYPASS_INI_DEFAULT_VALUES=true \
@@ -128,15 +174,16 @@ composer-diagnose:
 		--env COMPOSER_ALLOW_SUPERUSER=1 \
 		--env COMPOSER_PROCESS_TIMEOUT=900 \
 		--env COMPOSER_MEMORY_LIMIT=-1 \
+		$(DOCKER_PROXY_ARGS) \
 		--user root \
-		--volume /etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt \
+		$(DOCKER_CA_ARGS) \
 		--volume ${CURRENT_HOMEDIR}:${CURRENT_HOMEDIR}:rw \
 		--tmpfs /app/tmp:size=100m,mode=1777 \
 		--rm \
 		${BUILDER_DOCKER_IMAGE_NAME} \
 		bash -c ${COMPOSER_DIAGNOSE_CMDLINE}
 
-composer-update:
+composer-update: $(CA_PREREQ)
 	@echo "\n-- Running Composer update --\n"
 	@docker run \
 		--env PHP_BYPASS_INI_DEFAULT_VALUES=true \
@@ -146,8 +193,9 @@ composer-update:
 		--env COMPOSER_ALLOW_SUPERUSER=1 \
 		--env COMPOSER_PROCESS_TIMEOUT=900 \
 		--env COMPOSER_MEMORY_LIMIT=-1 \
+		$(DOCKER_PROXY_ARGS) \
 		--user ${CURRENT_UID}:${CURRENT_GID} \
-		--volume /etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt \
+		$(DOCKER_CA_ARGS) \
 		--volume ${CURRENT_HOMEDIR}:${CURRENT_HOMEDIR}:rw \
 		--volume ${DEMO_DIR}:${BUILDER_WORKING_DIR}:rw \
 		--tmpfs /app/tmp:size=100m,mode=1777 \
@@ -156,7 +204,7 @@ composer-update:
 		${BUILDER_DOCKER_IMAGE_NAME} \
 		bash -c ${COMPOSER_UPDATE_CMDLINE}
 
-composer-install:
+composer-install: $(CA_PREREQ)
 	@echo "\n-- Running Composer install --\n"
 	@docker run \
 		--env PHP_BYPASS_INI_DEFAULT_VALUES=true \
@@ -166,8 +214,9 @@ composer-install:
 		--env COMPOSER_ALLOW_SUPERUSER=1 \
 		--env COMPOSER_PROCESS_TIMEOUT=900 \
 		--env COMPOSER_MEMORY_LIMIT=-1 \
+		$(DOCKER_PROXY_ARGS) \
 		--user ${CURRENT_UID}:${CURRENT_GID} \
-		--volume /etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt \
+		$(DOCKER_CA_ARGS) \
 		--volume ${CURRENT_HOMEDIR}:${CURRENT_HOMEDIR}:rw \
 		--volume ${DEMO_DIR}:${BUILDER_WORKING_DIR}:rw \
 		--tmpfs /app/tmp:size=100m,mode=1777 \
@@ -176,7 +225,7 @@ composer-install:
 		${BUILDER_DOCKER_IMAGE_NAME} \
 		bash -c ${COMPOSER_INSTALL_CMDLINE}
 
-composer-selfupdate:
+composer-selfupdate: $(CA_PREREQ)
 	@echo "\n-- Running Composer Self-Update --\n"
 	@docker run \
 		--env PHP_BYPASS_INI_DEFAULT_VALUES=true \
@@ -186,63 +235,14 @@ composer-selfupdate:
 		--env COMPOSER_ALLOW_SUPERUSER=1 \
 		--env COMPOSER_PROCESS_TIMEOUT=900 \
 		--env COMPOSER_MEMORY_LIMIT=-1 \
+		$(DOCKER_PROXY_ARGS) \
 		--user ${CURRENT_UID}:0 \
-		--volume /etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt \
+		$(DOCKER_CA_ARGS) \
 		--volume ${CURRENT_HOMEDIR}:${CURRENT_HOMEDIR}:rw \
 		--tmpfs /app/tmp:size=100m,mode=1777 \
 		--rm \
 		${BUILDER_DOCKER_IMAGE_NAME} \
 		bash -c ${COMPOSER_SELF_UPDATE_CMDLINE}
-
-# —— NPM ——————————————————————————————————————————————————————————————————————————————————————————————————————————————
-
-npm-configure:
-	@echo "\n-- Running NPM config --\n"
-	@docker run \
-		--env PHP_BYPASS_INI_DEFAULT_VALUES=true \
-		--env HOME=${CURRENT_HOMEDIR} \
-		--env USER=${CURRENT_USERNAME} \
-		--user ${CURRENT_UID}:${CURRENT_GID} \
-		--volume /etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt \
-		--volume ${CURRENT_HOMEDIR}:${CURRENT_HOMEDIR}:rw \
-		--volume ${DEMO_DIR}:${BUILDER_WORKING_DIR}:rw \
-		--tmpfs /app/tmp:size=100m,mode=1777 \
-		--workdir ${BUILDER_WORKING_DIR} \
-		--rm \
-		${BUILDER_DOCKER_IMAGE_NAME} \
-		bash -c ${NPM_CONFIG_CMDLINE}
-
-npm-install:
-	@echo "\n-- Running NPM install --\n"
-	@docker run \
-		--env PHP_BYPASS_INI_DEFAULT_VALUES=true \
-		--env HOME=${CURRENT_HOMEDIR} \
-		--env USER=${CURRENT_USERNAME} \
-		--user ${CURRENT_UID}:${CURRENT_GID} \
-		--volume /etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt \
-		--volume ${CURRENT_HOMEDIR}:${CURRENT_HOMEDIR}:rw \
-		--volume ${DEMO_DIR}:${BUILDER_WORKING_DIR}:rw \
-		--tmpfs /app/tmp:size=100m,mode=1777 \
-		--workdir ${BUILDER_WORKING_DIR} \
-		--rm \
-		${BUILDER_DOCKER_IMAGE_NAME} \
-		bash -c ${NPM_INSTALL_CMDLINE}
-
-npm-build:
-	@echo "\n-- Running NPM run build --\n"
-	@docker run \
-		--env PHP_BYPASS_INI_DEFAULT_VALUES=true \
-		--env HOME=${CURRENT_HOMEDIR} \
-		--env USER=${CURRENT_USERNAME} \
-		--user ${CURRENT_UID}:${CURRENT_GID} \
-		--volume /etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt \
-		--volume ${CURRENT_HOMEDIR}:${CURRENT_HOMEDIR}:rw \
-		--volume ${DEMO_DIR}:${BUILDER_WORKING_DIR}:rw \
-		--tmpfs /app/tmp:size=100m,mode=1777 \
-		--workdir ${BUILDER_WORKING_DIR} \
-		--rm \
-		${BUILDER_DOCKER_IMAGE_NAME} \
-		bash -c ${NPM_RUN_BUILD_CMDLINE}
 
 # —— Load —————————————————————————————————————————————————————————————————————————————————————————————————————————————
 # These need the demo stack up: demo-infra (traefik, profile all) + symfony started.
