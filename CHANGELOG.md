@@ -22,7 +22,25 @@ tracks PHP 8.4, and a backport rewrites its section rather than cherry-picking i
 
 ## [Unreleased]
 
+## [8.4.26]
+
+PHP 8.4.26. Most of the image changes below first reached users by moving the `8.4.25` tag, before
+this PHP release gave them a version of their own.
+
 ### Added
+
+- **The image builds behind a corporate proxy and a TLS-inspecting CA.** `HTTP_PROXY`, `HTTPS_PROXY`
+  and `NO_PROXY` (either case) are passed to the build as BuildKit arguments, and `CUSTOM_CA_BUNDLE`
+  names a PEM file that is **added** to the trust store of the steps that download — mounted as a
+  build secret, never written into a published layer. `CA_BUNDLE_SHA` ties the cached layer to the
+  CA's content, `NO_CACHE=true` forces a cache-less build, and `ENABLE_ATTESTATIONS=false` skips the
+  provenance and SBOM attestations a local registry may refuse. Without these variables the build is
+  unchanged.
+- **Late init hooks are told what the application will not see.** They receive `CLEANUP_VAR_LIST`,
+  the colon-separated names the image unsets before the application starts — its ini directives,
+  pool settings, extension switches, AWS settings and every `<NAME>_WCMTECH_DEFAULT` a child image
+  declared. A hook that hands variables to the application on its own (php-fpm `env[]` entries, a
+  dotenv file) leaves those out. The variable lives in the hook's environment only.
 
 - **Findings the image cannot reach are declared, not hidden.** `.vex/gomplate.openvex.json` is an
   OpenVEX document stating, per advisory, that the ten `go-git`, `x/crypto` and `grpc` findings in
@@ -41,6 +59,16 @@ tracks PHP 8.4, and a backport rewrites its section rather than cherry-picking i
 
 ### Fixed
 
+- **Any uid can write `HOME`.** `/home/default` was `2755` to uid 1001, so an arbitrary OpenShift
+  uid, a bare `-u 1000` or a `--user uid:gid` pair could not create `~/.npm`, `~/.cache` or
+  `~/.config`: npm failed on its cache before doing anything. It is now world-writable and sticky,
+  like the runtime directories, and keeps its setgid bit (`3777`).
+- **The OpenSSL the image reports is the one it runs.** Node was brought in by copying the node
+  image's `/usr/lib` over the Alpine one, which silently downgraded OpenSSL 3.5.8 to 3.5.7 and left
+  the apk database describing packages that were no longer there, so a scanner reading it reported
+  the wrong versions. Only the Node runtime is copied now, and its two runtime libraries come from apk.
+- **The `cli` base layer stops on a failing command.** Its `RUN` read `set eux;` without the dash,
+  which sets the positional parameters and no option.
 - **The image scan uploads only the severities it says it does.** `aquasecurity/trivy-action`
   ignores its `severity` input when the output format is SARIF unless
   `limit-severities-for-sarif` is set, so the Security tab was filling with `MEDIUM` and `UNKNOWN`
@@ -118,5 +146,6 @@ newer commit, so an image pulled before those dates differs from one pulled afte
   nothing; a plain `docker stop` wants `-t 30` and compose wants `stop_grace_period: 30s`.
 - **Any exit of nginx, php-fpm or apache stops the container**, including exit code 0.
 
-[Unreleased]: https://github.com/Smals-Webtech/base-php/compare/8.4.25...8.4
+[Unreleased]: https://github.com/Smals-Webtech/base-php/compare/8.4.26...8.4
+[8.4.26]: https://github.com/Smals-Webtech/base-php/compare/8.4.25...8.4.26
 [8.4.25]: https://github.com/Smals-Webtech/base-php/compare/8.4.24...8.4.25
