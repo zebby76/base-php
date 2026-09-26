@@ -13,13 +13,22 @@ DOCKER_COMPOSE		           = docker compose --project-directory=. --env-file=../
 CURRENT_UID                   := $(shell id -u)
 CURRENT_GID                   := $(shell id -g)
 
+# The uid the symfony service runs under: the caller's, the same the console
+# commands (EXEC_DEMO) and composer use. With two identities -- the image's 1001
+# for the web, the caller's for the console -- whichever wrote a file in /app/var
+# first kept it: the runtime directories are sticky (1777), and the kernel's
+# protected_regular refuses to open another user's file there with O_CREAT, as
+# Monolog does. A `make configure` before the first web request left the log to
+# the caller, and every page answered 500. gid 0, as the image expects.
+export DEMO_UID               := $(CURRENT_UID)
+
 CURRENT_USERNAME              := $(shell id -u -n)
 CURRENT_HOMEDIR               := $${HOME}
 CURRENT_DIR                   := $(shell pwd)
 
 DEMO_DIR                       = ${CURRENT_DIR}/src/demo
 DEMO_REPO                      = https://github.com/symfony/demo.git
-DEMO_REF                       = v3.0.1
+DEMO_REF                       = v3.1.0
 
 BUILDER_WORKING_DIR            = /app
 BUILDER_DOCKER_IMAGE_NAME     ?= docker.io/smalswebtech/base-php:cli-dev
@@ -129,12 +138,17 @@ update:
 	@echo "Fetching $(DEMO_REF)..."
 	cd $(DEMO_DIR) && git fetch origin $(DEMO_REF) --depth 1
 
+# The build leaves the clone dirty -- composer update rewrites composer.lock, and
+# Symfony generates config/reference.php, which some demo releases track and
+# others do not -- and a plain checkout refused to move over either, so changing
+# DEMO_REF failed halfway. --force discards those changes, and clean removes the
+# untracked files the next build regenerates; ignored ones (vendor/) stay.
 reset: 
 	@$(MAKE) update
 	@echo "Resetting demo repo to $(DEMO_REF)"
 	cd $(DEMO_DIR) && \
-	git checkout FETCH_HEAD && \
-	git reset --hard FETCH_HEAD
+	git checkout --force --detach FETCH_HEAD && \
+	git clean -fd
 
 clean:
 	rm -rf $(DEMO_DIR) $(CURRENT_DIR)/.cache
