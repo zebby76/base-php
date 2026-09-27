@@ -31,6 +31,16 @@ tracks PHP 8.4, and a backport rewrites its section rather than cherry-picking i
   rendering and before the late hooks, exactly like late hooks otherwise, without their lock. An
   image with no `boot.d` directory starts exactly as before.
 
+### Changed
+
+- **The late hooks' fingerprint covers their subdirectories.** A late hook commonly sources its
+  steps from a directory of its own (`limesurvey.d/`, `drupal.d/`, `elasticms.d/`), and only the
+  top-level files were hashed: an image that changed a step and nothing else never ran it on a
+  volume that had already run the hooks. Every file under a subdirectory now counts, except
+  `entrypoint.d/` and `boot.d/`. **On upgrade, a persistent `/app/var` re-runs its late hooks once**,
+  since the fingerprint changes; they are expected to be re-runnable. On an ephemeral `/app/var`
+  (`emptyDir`, `tmpfs`) they already run at every start, and nothing changes.
+
 ## [8.4.26]
 
 PHP 8.4.26. Most of the image changes below first reached users by moving the `8.4.25` tag, before
