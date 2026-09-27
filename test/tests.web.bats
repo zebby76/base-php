@@ -104,6 +104,8 @@ teardown_file() {
   container_clean "${BATS_WEB_CONTAINER}-mounts"
   container_clean "${BATS_WEB_CONTAINER}-hook0"
   container_clean "${BATS_WEB_CONTAINER}-hooklock"
+  container_clean "${BATS_WEB_CONTAINER}-boot"
+  container_clean "${BATS_WEB_CONTAINER}-bootorder"
   container_clean "${BATS_WEB_CONTAINER}-hookenv"
   container_clean "${BATS_WEB_CONTAINER}-hookfn"
   container_clean "${BATS_WEB_CONTAINER}-hookcleanup"
@@ -784,6 +786,73 @@ teardown_file() {
 
   run ${BATS_CONTAINER_ENGINE} logs "${name}"
   assert_equal "$(grep -c 'hook ran' <<<"${output}")" "1"
+}
+
+# Late hooks run once per /app/var, so a child image that rendered its own
+# configuration from one lost it whenever /opt/etc was emptied and /app/var was
+# not: the next start skipped the hook, and the container served without it.
+# boot.d runs at every start. A tmpfs /opt/etc is emptied by a restart, while
+# the container's /app/var is kept, which is exactly that situation.
+@test "[$TEST_FILE] A boot hook runs at every start, a late hook once" {
+  local -r name="${BATS_WEB_CONTAINER}-boot"
+  local -r boot="${BATS_TEST_TMPDIR}/10-render.sh"
+  local -r late="${BATS_TEST_TMPDIR}/10-once.sh"
+
+  printf '#!/bin/bash\nmkdir -p /opt/etc/child\necho rendered > /opt/etc/child/app.conf\necho "boot hook ran"\n' >"${boot}"
+  printf '#!/bin/bash\necho "late hook ran"\n' >"${late}"
+
+  ${BATS_CONTAINER_ENGINE} run --pull=never --detach --name "${name}" \
+    --tmpfs /opt/etc:rw,mode=1777 \
+    --volume "${boot}:/opt/bin/container-entrypoint.d/boot.d/10-render.sh:ro" \
+    --volume "${late}:/opt/bin/container-entrypoint.d/10-once.sh:ro" \
+    "$(image_tag "${BATS_VARIANT}" "${BATS_TARGET}")" >/dev/null
+  container_wait_for_healthy "${name}" 60 >/dev/null
+
+  ${BATS_CONTAINER_ENGINE} restart "${name}" >/dev/null
+  container_wait_for_healthy "${name}" 60 >/dev/null
+
+  run ${BATS_CONTAINER_ENGINE} exec "${name}" cat /opt/etc/child/app.conf
+  assert_output "rendered"
+
+  run ${BATS_CONTAINER_ENGINE} logs "${name}"
+  assert_equal "$(grep -c 'boot hook ran' <<<"${output}")" "2"
+  assert_equal "$(grep -c 'late hook ran' <<<"${output}")" "1"
+}
+
+# The order is the contract: a boot hook sees the image's own rendering, and a
+# late hook -- a migration using a console wrapper, say -- sees what boot.d
+# rendered.
+@test "[$TEST_FILE] A boot hook runs after the base rendering and before the late hooks" {
+  local -r name="${BATS_WEB_CONTAINER}-bootorder"
+  local -r boot="${BATS_TEST_TMPDIR}/10-boot.sh"
+  local -r late="${BATS_TEST_TMPDIR}/10-late.sh"
+
+  printf '#!/bin/bash\ntest -s /opt/etc/supervisord.conf && echo "boot saw the base rendering"\ntouch /app/tmp/boot-done\n' >"${boot}"
+  printf '#!/bin/bash\ntest -e /app/tmp/boot-done && echo "late saw boot.d"\n' >"${late}"
+
+  ${BATS_CONTAINER_ENGINE} run --pull=never --detach --name "${name}" \
+    --volume "${boot}:/opt/bin/container-entrypoint.d/boot.d/10-boot.sh:ro" \
+    --volume "${late}:/opt/bin/container-entrypoint.d/10-late.sh:ro" \
+    "$(image_tag "${BATS_VARIANT}" "${BATS_TARGET}")" >/dev/null
+  container_wait_for_healthy "${name}" 60 >/dev/null
+
+  run ${BATS_CONTAINER_ENGINE} logs "${name}"
+  assert_output --partial "boot saw the base rendering"
+  assert_output --partial "late saw boot.d"
+}
+
+# A boot hook fails the way a late hook does: the start is refused and the log
+# names it.
+@test "[$TEST_FILE] A failing boot hook stops the boot and is named" {
+  local -r hook="${BATS_TEST_TMPDIR}/10-bootfail.sh"
+
+  printf '#!/bin/bash\necho "boot hook: about to fail"\nexit 4\n' >"${hook}"
+
+  run ${BATS_CONTAINER_ENGINE} run --pull=never --rm \
+    --volume "${hook}:/opt/bin/container-entrypoint.d/boot.d/10-bootfail.sh:ro" \
+    "$(image_tag "${BATS_VARIANT}" "${BATS_TARGET}")"
+  assert_failure
+  assert_output --partial "10-bootfail.sh exited with 4"
 }
 
 # Hooks are child processes, so what they set stays with them. This pins the

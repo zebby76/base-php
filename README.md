@@ -116,13 +116,43 @@ This approach ensures idempotent initialization, predictable config state, and n
 ### Application startup hooks
 
 A child image can run its own code during startup by dropping files into
-`/opt/bin/container-entrypoint.d`. There are two places to do it, and they run at different moments.
+`/opt/bin/container-entrypoint.d`. There are three places to do it, and they run at different moments:
+
+| Stage | Where | When | Use it for |
+|-------|-------|------|------------|
+| Early hooks | `entrypoint.d/*.sh` | every start, before the environment is resolved | `<VARIABLE>_WCMTECH_DEFAULT` values |
+| Boot hooks | `boot.d/*.sh`, `boot.d/*.php` | every start, after the image's own rendering | rendering your configuration, checks, idempotent migrations |
+| Late hooks | `*.sh`, `*.php` | once per `/app/var` volume, after the boot hooks | one-off initialization |
+
+**Boot hooks** — `/opt/bin/container-entrypoint.d/boot.d/*.sh` and `*.php`
+
+They run at **every start**, after the image has rendered its own configuration and before the late
+hooks, so a late hook can rely on what they render. Put here whatever lives in `/opt/etc` or
+`/opt/sbin` — your vhosts, pools, Supervisor programs, application configuration — and anything that
+must hold on every start. A late hook is skipped whenever `/app/var` outlives `/opt/etc`, and the
+container then serves without the configuration it rendered.
+
+```dockerfile
+COPY --chown=1001:0 render.sh /opt/bin/container-entrypoint.d/boot.d/10-render.sh
+```
+
+They run exactly like late hooks — same child process, same helper functions, same
+`CLEANUP_VAR_LIST`, same name order, and a non-zero exit refuses the start — with two differences:
+they are not skipped, and they take **no lock**, since replicas start in parallel. So a boot hook
+must be idempotent, and should write only paths that belong to the container (`/opt/etc`,
+`/opt/sbin`, `/app/tmp`).
+
+Idempotent migrations (`doctrine:migrations:migrate`, `drush updatedb`, LimeSurvey's `updatedb`)
+belong here too. A late hook runs once per hook content, not once per image: a new image whose hooks
+did not change skips them on a volume that already ran them, migration included. Two replicas
+starting together run such a migration together; locking it is the job of the application or the
+database, as it would be anywhere else.
 
 **Late hooks** — `/opt/bin/container-entrypoint.d/*.sh` and `*.php`
 
-They run after every configuration file has been rendered and **before Supervisor starts**, so no
-web server or php-fpm is listening yet. This is where migrations, cache warm-ups and asset builds
-belong. They run as uid `1001`, with `/app` as the working directory.
+They run after every configuration file has been rendered, the boot hooks included, and **before
+Supervisor starts**, so no web server or php-fpm is listening yet. This is where one-off
+initialization belongs. They run as uid `1001`, with `/app` as the working directory.
 
 ```dockerfile
 COPY --chown=1001:0 migrate.sh /opt/bin/container-entrypoint.d/10-migrate.sh
@@ -200,7 +230,7 @@ cleanup removes, secrets included:
 
 The list is in the late hooks' environment only; it never reaches the application.
 
-The `cli` variant does not run late hooks: it has no Supervisor and a shorter entrypoint. A worker
+The `cli` variant runs neither boot nor late hooks: it has no Supervisor and a shorter entrypoint. A worker
 or cron image built from it has to invoke its initialization itself.
 
 **Early hooks** — `/opt/bin/container-entrypoint.d/entrypoint.d/*.sh`
@@ -213,12 +243,12 @@ defaults have been resolved.
 
 **What crosses into the application, and what does not:**
 
-| Set in | How | Seen by a late hook | Seen by the application |
-|--------|-----|---------------------|-------------------------|
+| Set in | How | Seen by a boot or late hook | Seen by the application |
+|--------|-----|-----------------------------|-------------------------|
 | Early hook | `FOO_WCMTECH_DEFAULT=x` | Yes, under the name `FOO` | **No** — unset just before the exec |
 | Early hook | `export FOO=x` | Yes | **Yes** |
 | Early hook | `FOO=x`, not exported | No | No |
-| Late hook | Anything at all | — | No, it dies with the hook's process |
+| Boot or late hook | Anything at all | — | No, it dies with the hook's process |
 
 Two things follow that are easy to get wrong. `<VARIABLE>_WCMTECH_DEFAULT` only means anything in an
 early hook: the defaults are resolved before the late hooks run, so the suffix does nothing there —

@@ -22,6 +22,15 @@ tracks PHP 8.4, and a backport rewrites its section rather than cherry-picking i
 
 ## [Unreleased]
 
+### Added
+
+- **Boot hooks: `/opt/bin/container-entrypoint.d/boot.d/`.** A child image had nowhere to run code
+  at every start after the image's own rendering: late hooks run once per `/app/var` volume, so a
+  configuration a child rendered from one was lost whenever `/opt/etc` was emptied and `/app/var`
+  was not, and the container served without it. Boot hooks run at every start, after the image's
+  rendering and before the late hooks, exactly like late hooks otherwise, without their lock. An
+  image with no `boot.d` directory starts exactly as before.
+
 ## [8.5.11]
 
 PHP 8.5.11. Most of the image changes below first reached users by moving the `8.5.10` tag, before
