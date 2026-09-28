@@ -106,6 +106,7 @@ teardown_file() {
   container_clean "${BATS_WEB_CONTAINER}-hooklock"
   container_clean "${BATS_WEB_CONTAINER}-boot"
   container_clean "${BATS_WEB_CONTAINER}-bootorder"
+  container_clean "${BATS_WEB_CONTAINER}-fp"
   container_clean "${BATS_WEB_CONTAINER}-hookenv"
   container_clean "${BATS_WEB_CONTAINER}-hookfn"
   container_clean "${BATS_WEB_CONTAINER}-hookcleanup"
@@ -116,7 +117,7 @@ teardown_file() {
   container_clean "${BATS_WEB_CONTAINER}-slowlog"
   container_clean "${BATS_WEB_CONTAINER}-stanza"
   ${BATS_CONTAINER_ENGINE} volume rm -f "${BATS_WEB_CONTAINER}-lock" "${BATS_WEB_CONTAINER}-log" \
-    "${BATS_WEB_CONTAINER}-etc" >/dev/null 2>&1 || true
+    "${BATS_WEB_CONTAINER}-etc" "${BATS_WEB_CONTAINER}-fplock" >/dev/null 2>&1 || true
 }
 
 @test "[$TEST_FILE] The container reports healthy" {
@@ -853,6 +854,49 @@ teardown_file() {
     "$(image_tag "${BATS_VARIANT}" "${BATS_TARGET}")"
   assert_failure
   assert_output --partial "10-bootfail.sh exited with 4"
+}
+
+# A late hook commonly sources its steps from a subdirectory of its own, and only
+# the top level was fingerprinted: an image that changed a step and nothing else
+# never ran it on a volume that had already run the hooks. The subdirectories
+# count now -- except entrypoint.d/ and boot.d/, which are other stages.
+@test "[$TEST_FILE] A change under a late hook's subdirectory re-runs the late hooks" {
+  local -r name="${BATS_WEB_CONTAINER}-fp"
+  local -r lock="${BATS_WEB_CONTAINER}-fplock"
+  local -r image="$(image_tag "${BATS_VARIANT}" "${BATS_TARGET}")"
+  local -r hook="${BATS_TEST_TMPDIR}/10-setup.sh"
+  local -r steps="${BATS_TEST_TMPDIR}/setup.d"
+  local -r stage="${BATS_TEST_TMPDIR}/boot.d"
+
+  mkdir -p "${steps}" "${stage}"
+  printf '#!/bin/bash\nsource /opt/bin/container-entrypoint.d/setup.d/10-step.sh\n' >"${hook}"
+  printf 'echo "late step v1"\n' >"${steps}/10-step.sh"
+  printf '#!/bin/bash\ntrue\n' >"${stage}/10-render.sh"
+
+  start_fp() {
+    ${BATS_CONTAINER_ENGINE} rm -f "${name}" >/dev/null 2>&1 || true
+    ${BATS_CONTAINER_ENGINE} run --pull=never --detach --name "${name}" \
+      --volume "${lock}:/app/var/lock" \
+      --volume "${hook}:/opt/bin/container-entrypoint.d/10-setup.sh:ro" \
+      --volume "${steps}:/opt/bin/container-entrypoint.d/setup.d:ro" \
+      "$@" "${image}" >/dev/null
+    container_wait_for_healthy "${name}" 60 >/dev/null
+  }
+
+  ${BATS_CONTAINER_ENGINE} volume create "${lock}" >/dev/null
+  start_fp
+
+  # Only the sourced step changes.
+  printf 'echo "late step v2"\n' >"${steps}/10-step.sh"
+  start_fp
+  run ${BATS_CONTAINER_ENGINE} logs "${name}"
+  assert_output --partial "late step v2"
+
+  # A file under boot.d/ is not a late hook's: the late hooks stay applied.
+  start_fp --volume "${stage}:/opt/bin/container-entrypoint.d/boot.d:ro"
+  run ${BATS_CONTAINER_ENGINE} logs "${name}"
+  refute_output --partial "late step v2"
+  assert_output --partial "already applied for these scripts"
 }
 
 # Hooks are child processes, so what they set stays with them. This pins the
