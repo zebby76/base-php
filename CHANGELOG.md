@@ -24,6 +24,12 @@ tracks PHP 8.4, and a backport rewrites its section rather than cherry-picking i
 
 ### Added
 
+- **What a child image's own vhost and pool must repeat.** `docs/child-vhosts-and-pools.md` lists what
+  the image's settings reach on their own (nginx's `http` level, php-fpm's `[global]` section) and
+  what they do not (the default server, the `[www]` pool), with a vhost and a pool to start from.
+  Found through elasticms, whose pools had no `request_terminate_timeout` and whose vhosts were
+  never throttled.
+
 - **A child image's vhost can be throttled.** The soft-throttling zones were declared for the whole
   of nginx but enforced in the image's default server only, so a vhost added by a child image was
   never throttled, whatever `NGINX_SOFT_THROTTLE_ENABLED` said (measured on elasticms: 0 of 30

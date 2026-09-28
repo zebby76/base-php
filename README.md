@@ -460,6 +460,14 @@ RUN install-php-extensions ${PHP_EXT_INSTALL_CUSTOM}
 
 These extensions will automatically be processed and installed along with the default ones defined in the parent image.
 
+### Bringing your own vhost or php-fpm pool
+
+What the image sets at nginx's `http` level and in php-fpm's `[global]` section applies to a vhost
+and a pool a child image adds. What it sets inside its default server and its `[www]` pool does
+not: dotfile blocking, the guarded PHP location, soft throttling, `request_terminate_timeout`, the
+slow log. [docs/child-vhosts-and-pools.md](docs/child-vhosts-and-pools.md) lists both sides, with a
+vhost and a pool to start from.
+
 ### FastCGI Process Manager (FPM)
 
 [Configuration](docs/php-fpm.md)  
