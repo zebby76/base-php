@@ -22,6 +22,15 @@ tracks PHP 8.4, and a backport rewrites its section rather than cherry-picking i
 
 ## [Unreleased]
 
+## [8.5.11]
+
+PHP 8.5.11. Most of the image changes below first reached users by moving the `8.5.10` tag, before
+this PHP release gave them a version of their own.
+
+Re-published 2026-09-28 (boot hooks, late-hook fingerprint): the `8.5.11` tag moved to a newer
+commit, so an image pulled before that date differs from one pulled after. **A persistent `/app/var`
+re-runs its late hooks once** after the upgrade; see _Changed_ below.
+
 ### Added
 
 - **Boot hooks: `/opt/bin/container-entrypoint.d/boot.d/`.** A child image had nowhere to run code
@@ -30,24 +39,6 @@ tracks PHP 8.4, and a backport rewrites its section rather than cherry-picking i
   was not, and the container served without it. Boot hooks run at every start, after the image's
   rendering and before the late hooks, exactly like late hooks otherwise, without their lock. An
   image with no `boot.d` directory starts exactly as before.
-
-### Changed
-
-- **The late hooks' fingerprint covers their subdirectories.** A late hook commonly sources its
-  steps from a directory of its own (`limesurvey.d/`, `drupal.d/`, `elasticms.d/`), and only the
-  top-level files were hashed: an image that changed a step and nothing else never ran it on a
-  volume that had already run the hooks. Every file under a subdirectory now counts, except
-  `entrypoint.d/` and `boot.d/`. **On upgrade, a persistent `/app/var` re-runs its late hooks once**,
-  since the fingerprint changes; they are expected to be re-runnable. On an ephemeral `/app/var`
-  (`emptyDir`, `tmpfs`) they already run at every start, and nothing changes.
-
-## [8.5.11]
-
-PHP 8.5.11. Most of the image changes below first reached users by moving the `8.5.10` tag, before
-this PHP release gave them a version of their own.
-
-### Added
-
 - **The image builds behind a corporate proxy and a TLS-inspecting CA.** `HTTP_PROXY`, `HTTPS_PROXY`
   and `NO_PROXY` (either case) are passed to the build as BuildKit arguments, and `CUSTOM_CA_BUNDLE`
   names a PEM file that is **added** to the trust store of the steps that download — mounted as a
@@ -75,6 +66,16 @@ this PHP release gave them a version of their own.
   tooling rather than in PHP.
 - **This file.** The GitHub release notes are regenerated from the previous tag by `make retag` and
   `make notes`, which discards anything written into them by hand; what is written here survives.
+
+### Changed
+
+- **The late hooks' fingerprint covers their subdirectories.** A late hook commonly sources its
+  steps from a directory of its own (`limesurvey.d/`, `drupal.d/`, `elasticms.d/`), and only the
+  top-level files were hashed: an image that changed a step and nothing else never ran it on a
+  volume that had already run the hooks. Every file under a subdirectory now counts, except
+  `entrypoint.d/` and `boot.d/`. **On upgrade, a persistent `/app/var` re-runs its late hooks once**,
+  since the fingerprint changes; they are expected to be re-runnable. On an ephemeral `/app/var`
+  (`emptyDir`, `tmpfs`) they already run at every start, and nothing changes.
 
 ### Fixed
 
@@ -118,7 +119,7 @@ newer commit, so an image pulled before those dates differs from one pulled afte
   `display_startup_errors`, `assert.*`, `filter.*`, `session.*`), and the list the image accepts ships
   at `/usr/local/share/base-php/ini-directives.list`.
 - **A `PHP_*` variable that matches no directive is named at `INFO`** on startup. A typo used to
-  configure nothing *and* reach the application, in silence.
+  configure nothing _and_ reach the application, in silence.
 - **`docker run --read-only` without mounts refuses to start.** The image no longer declares `VOLUME`,
   so `/opt/etc`, `/opt/sbin`, `/app/tmp` and `/app/var` are yours to provide; the entrypoint names each
   unusable path and prints the `--tmpfs` line to add. A container started without `--read-only` is
