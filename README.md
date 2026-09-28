@@ -604,6 +604,22 @@ Two-zone rate limiting: a global limit for all traffic, and a stricter bot-speci
 
 Default bot patterns: `googlebot`, `bingbot`, `baiduspider`, `yandexbot`, `duckduckbot`, `semrushbot`, `ahrefsbot`, `python-requests`, `curl`, `wget`, `adsbot-google`, and others.
 
+**A vhost of your own is throttled only if it asks.** The limits apply to the image's default server.
+A server block that a child image adds opts in with one line:
+
+```nginx
+server {
+    server_name myapp.example;
+    include /opt/etc/nginx/conf.d/throttling-server.conf;
+    # ...
+}
+```
+
+It then follows the same `NGINX_SOFT_THROTTLE_*` settings. The file always exists and holds no
+directive while `NGINX_SOFT_THROTTLE_ENABLED` is not `true`, so the include is safe either way. Do not
+add it to a monitoring server: a probe run with `curl` falls in the bot zone, limited to `1r/m`. A
+location that answers with `return` is not throttled: `return` runs before the limits are checked.
+
 ### Basic Authentication
 
 | Environment Variable | Default | Description |

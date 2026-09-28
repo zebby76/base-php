@@ -22,6 +22,16 @@ tracks PHP 8.4, and a backport rewrites its section rather than cherry-picking i
 
 ## [Unreleased]
 
+### Added
+
+- **A child image's vhost can be throttled.** The soft-throttling zones were declared for the whole
+  of nginx but enforced in the image's default server only, so a vhost added by a child image was
+  never throttled, whatever `NGINX_SOFT_THROTTLE_ENABLED` said (measured on elasticms: 0 of 30
+  requests rejected, against 27 on the default server). A server block now opts in with
+  `include /opt/etc/nginx/conf.d/throttling-server.conf;`, the file the default server uses too. It
+  always exists and is empty of directives while throttling is off. Nothing changes for a vhost that
+  does not include it.
+
 ## [8.4.26]
 
 PHP 8.4.26. Most of the image changes below first reached users by moving the `8.4.25` tag, before

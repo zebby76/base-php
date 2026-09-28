@@ -104,6 +104,8 @@ teardown_file() {
   container_clean "${BATS_WEB_CONTAINER}-mounts"
   container_clean "${BATS_WEB_CONTAINER}-hook0"
   container_clean "${BATS_WEB_CONTAINER}-hooklock"
+  container_clean "${BATS_WEB_CONTAINER}-throttle"
+  container_clean "${BATS_WEB_CONTAINER}-nothrottle"
   container_clean "${BATS_WEB_CONTAINER}-boot"
   container_clean "${BATS_WEB_CONTAINER}-bootorder"
   container_clean "${BATS_WEB_CONTAINER}-fp"
@@ -357,6 +359,89 @@ teardown_file() {
 
   run cat "${BATS_TEST_TMPDIR}/drain"
   assert_output "completed"
+}
+
+# Two vhosts of a child image: one includes the throttling snippet, one does not.
+# They serve a file rather than `return`: return runs in the rewrite phase,
+# before limit_req, so a vhost made of returns is never throttled.
+throttle_vhosts() {
+  local -r dir=$1
+  mkdir -p "${dir}"
+  echo "child vhost" >"${dir}/index.txt"
+  cat >"${dir}/opted-in.conf.tmpl" <<'CONF'
+server {
+  listen {{ .Env.NGINX_LISTEN }};
+  server_name opted-in.localhost;
+  include /opt/etc/nginx/conf.d/throttling-server.conf;
+  root /opt/etc/child;
+  index index.txt;
+}
+CONF
+  cat >"${dir}/opted-out.conf.tmpl" <<'CONF'
+server {
+  listen {{ .Env.NGINX_LISTEN }};
+  server_name opted-out.localhost;
+  root /opt/etc/child;
+  index index.txt;
+}
+CONF
+}
+
+# Count the 429s among 20 back-to-back requests to host $2 on port $1.
+count_429() {
+  local i
+  for ((i = 0; i < 20; i++)); do
+    curl --silent --output /dev/null --write-out '%{http_code}\n' --max-time 5 \
+      --user-agent "Mozilla/5.0" --header "Host: $2" "http://127.0.0.1:$1/"
+  done | grep -c '^429$' || true
+}
+
+# The zones were declared for the whole of nginx but enforced in the image's
+# default server only, so a child image's vhosts were never throttled, whatever
+# NGINX_SOFT_THROTTLE_ENABLED said. A vhost now opts in by including one file.
+@test "[$TEST_FILE] A vhost that includes the throttling snippet is throttled" {
+  [ "${BATS_VARIANT}" = "nginx" ] || skip "soft throttling is an nginx feature"
+  local -r name="${BATS_WEB_CONTAINER}-throttle"
+  local -r vhosts="${BATS_TEST_TMPDIR}/vhosts"
+  local port
+
+  throttle_vhosts "${vhosts}"
+  port="$(web_container_start "${name}" \
+    --env NGINX_SOFT_THROTTLE_ENABLED=true \
+    --env NGINX_SOFT_THROTTLE_DRY_RUN_ENABLED=off \
+    --env NGINX_SOFT_THROTTLE_GLOBAL_ZONE_RATE=1r/s \
+    --env NGINX_SOFT_THROTTLE_GLOBAL_ZONE_BURST=2 \
+    --volume "${vhosts}/opted-in.conf.tmpl:/opt/config/nginx/sites-enabled/opted-in.conf.tmpl:ro" \
+    --volume "${vhosts}/opted-out.conf.tmpl:/opt/config/nginx/sites-enabled/opted-out.conf.tmpl:ro" \
+    --volume "${vhosts}/index.txt:/opt/etc/child/index.txt:ro")"
+
+  # The default server keeps its throttling.
+  [ "$(count_429 "${port}" default.localhost)" -gt 0 ]
+  # A vhost that includes the snippet gets it too.
+  [ "$(count_429 "${port}" opted-in.localhost)" -gt 0 ]
+  # A vhost that does not is left alone: including it is the vhost's choice.
+  assert_equal "$(count_429 "${port}" opted-out.localhost)" "0"
+}
+
+# The snippet is rendered even when throttling is off, and holds no directive
+# then, so a vhost can include it unconditionally.
+@test "[$TEST_FILE] The throttling snippet is safe to include when throttling is off" {
+  [ "${BATS_VARIANT}" = "nginx" ] || skip "soft throttling is an nginx feature"
+  local -r name="${BATS_WEB_CONTAINER}-nothrottle"
+  local -r vhosts="${BATS_TEST_TMPDIR}/vhosts"
+  local port
+
+  throttle_vhosts "${vhosts}"
+  port="$(web_container_start "${name}" \
+    --volume "${vhosts}/opted-in.conf.tmpl:/opt/config/nginx/sites-enabled/opted-in.conf.tmpl:ro" \
+    --volume "${vhosts}/index.txt:/opt/etc/child/index.txt:ro")"
+
+  run curl --silent --max-time 5 --header "Host: opted-in.localhost" "http://127.0.0.1:${port}/"
+  assert_output "child vhost"
+  assert_equal "$(count_429 "${port}" opted-in.localhost)" "0"
+
+  run ${BATS_CONTAINER_ENGINE} exec "${name}" grep -c "^limit_req" /opt/etc/nginx/conf.d/throttling-server.conf
+  assert_output "0"
 }
 
 # nginx sizes the buffer that has to hold the whole response header at one page

@@ -18,6 +18,10 @@ if [[ "${NGINX_ENABLED}" == "true" ]]; then
 
 	create-symlink /opt/etc/nginx/fastcgi_params /etc/nginx/fastcgi_params
 
+	# Throttling enforcement for a server block: always rendered, empty unless
+	# throttling is enabled, so a vhost can include it unconditionally.
+	apply-template /opt/config/nginx/conf.d/throttling-server.conf.tmpl /opt/etc/nginx/conf.d/throttling-server.conf
+
 	# Monitoring ACL: always rendered (the monitoring locations include it).
 	for cidr in $MONITORING_ALLOW; do
 		MON_CIDRS+=("$cidr")
