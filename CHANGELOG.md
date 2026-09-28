@@ -22,13 +22,17 @@ tracks PHP 8.4, and a backport rewrites its section rather than cherry-picking i
 
 ## [Unreleased]
 
-### Added
+## [8.5.11]
 
-- **What a child image's own vhost and pool must repeat.** `docs/child-vhosts-and-pools.md` lists what
-  the image's settings reach on their own (nginx's `http` level, php-fpm's `[global]` section) and
-  what they do not (the default server, the `[www]` pool), with a vhost and a pool to start from.
-  Found through elasticms, whose pools had no `request_terminate_timeout` and whose vhosts were
-  never throttled.
+PHP 8.5.11. Most of the image changes below first reached users by moving the `8.5.10` tag, before
+this PHP release gave them a version of their own.
+
+Re-published twice on 2026-09-28 — boot hooks and the late-hook fingerprint, then the throttling
+include for child vhosts and its documentation. Each moved the `8.5.11` tag to a newer commit, so an
+image pulled before that date differs from one pulled after. **A persistent `/app/var` re-runs its
+late hooks once** after the upgrade; see _Changed_ below.
+
+### Added
 
 - **A child image's vhost can be throttled.** The soft-throttling zones were declared for the whole
   of nginx but enforced in the image's default server only, so a vhost added by a child image was
@@ -37,18 +41,11 @@ tracks PHP 8.4, and a backport rewrites its section rather than cherry-picking i
   `include /opt/etc/nginx/conf.d/throttling-server.conf;`, the file the default server uses too. It
   always exists and is empty of directives while throttling is off. Nothing changes for a vhost that
   does not include it.
-
-## [8.5.11]
-
-PHP 8.5.11. Most of the image changes below first reached users by moving the `8.5.10` tag, before
-this PHP release gave them a version of their own.
-
-Re-published 2026-09-28 (boot hooks, late-hook fingerprint): the `8.5.11` tag moved to a newer
-commit, so an image pulled before that date differs from one pulled after. **A persistent `/app/var`
-re-runs its late hooks once** after the upgrade; see _Changed_ below.
-
-### Added
-
+- **What a child image's own vhost and pool must repeat.** `docs/child-vhosts-and-pools.md` lists what
+  the image's settings reach on their own (nginx's `http` level, php-fpm's `[global]` section) and
+  what they do not (the default server, the `[www]` pool), with a vhost and a pool to start from.
+  Found through elasticms, whose pools had no `request_terminate_timeout` and whose vhosts were
+  never throttled.
 - **Boot hooks: `/opt/bin/container-entrypoint.d/boot.d/`.** A child image had nowhere to run code
   at every start after the image's own rendering: late hooks run once per `/app/var` volume, so a
   configuration a child rendered from one was lost whenever `/opt/etc` was emptied and `/app/var`
