@@ -205,8 +205,10 @@ Three more things are worth knowing before writing one.
 **They run once per `/app/var` volume, not once per image.** A fingerprint of the hook filenames
 and their contents is written to `/app/var/lock/appinit`; the hooks re-run when that fingerprint
 changes, and are skipped otherwise. On an ephemeral volume — a `tmpfs`, or an `emptyDir` recreated
-with the pod — that means they run at every start. Helper files a hook sources are not part of the
-fingerprint.
+with the pod — that means they run at every start. The fingerprint covers the top-level `*.sh` and
+`*.php` files and **every file in their subdirectories**, so a step a hook sources from a directory of
+its own (`myapp.d/10-migrate.sh`) counts as the hook's code: changing it re-runs the late hooks.
+`entrypoint.d/` and `boot.d/` are left out, since they are other stages.
 
 **Replicas sharing that volume are serialised.** With `/app/var/lock` on a shared claim, one replica
 runs the hooks while the others wait, then find the marker written and skip. `APP_INIT_LOCK_TIMEOUT`

@@ -16,10 +16,20 @@ done
 # Fingerprint the app-init scripts (name + content) so that a new image with
 # changed init scripts re-runs them even when the persistent /app/var volume is
 # reused, while a plain restart with unchanged scripts still runs them only once.
+#
+# A late hook commonly sources its steps from a subdirectory of its own --
+# limesurvey.d/, drupal.d/, elasticms.d/. Those files are its code as much as
+# the hook itself, but only the top level was hashed, so an image that changed
+# a step and nothing else kept the old fingerprint and never ran it on a volume
+# that had already run the hooks. Every file under a subdirectory counts now.
+# entrypoint.d/ and boot.d/ do not: they are other stages, and changing what
+# they render must not re-run a migration.
 APP_INIT_FINGERPRINT="$(
-	find "$APP_INIT_DIR" -maxdepth 1 -type f \( -name '*.sh' -o -name '*.php' \) |
-		LC_ALL=C sort |
-		xargs -r sha256sum |
+	find "$APP_INIT_DIR" \
+		\( -path "$APP_INIT_DIR/entrypoint.d" -o -path "$APP_INIT_DIR/boot.d" \) -prune -o \
+		-type f \( -path "$APP_INIT_DIR/*/*" -o -name '*.sh' -o -name '*.php' \) -print0 |
+		LC_ALL=C sort -z |
+		xargs -0 -r sha256sum |
 		sha256sum |
 		cut -d ' ' -f 1
 )"
