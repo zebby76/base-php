@@ -22,25 +22,18 @@ tracks PHP 8.4, and a backport rewrites its section rather than cherry-picking i
 
 ## [Unreleased]
 
-### Fixed
-
-- **The `cli` variant runs a child image's early hooks.** `entrypoint.d/*.sh` under
-  `/opt/bin/container-entrypoint.d` was sourced by the web entrypoint only, so in a `cli` child a
-  `<VARIABLE>_WCMTECH_DEFAULT` did nothing, silently. The two known `cli` children worked around it by
-  sourcing this image's internal scripts by path, which is what stopped them when two of those
-  scripts were removed. The early hooks now run at the same point as in the web variants.
-
 ## [8.5.11]
 
 PHP 8.5.11. Most of the image changes below first reached users by moving the `8.5.10` tag, before
 this PHP release gave them a version of their own.
 
 Re-published twice on 2026-09-28 — boot hooks and the late-hook fingerprint, then the throttling
-include for child vhosts and its documentation — and once more on 2026-10-12, for
+include for child vhosts and its documentation — and twice on 2026-10-12: first for
 `update-ini-directives` (a child image's own extensions), the OCI labels and the pidfile no longer
-baked in. Each moved the `8.5.11` tag to a newer commit, so an image pulled before one of those dates
-differs from one pulled after. **A persistent `/app/var` re-runs its late hooks once** after the
-2026-09-28 upgrade; see _Changed_ below.
+baked in, then for the `cli` variant running a child image's early hooks. Each moved the `8.5.11`
+tag to a newer commit, so an image pulled before one of those dates differs from one pulled after.
+**A persistent `/app/var` re-runs its late hooks once** after the 2026-09-28 upgrade; see _Changed_
+below.
 
 ### Added
 
@@ -117,6 +110,12 @@ differs from one pulled after. **A persistent `/app/var` re-runs its late hooks 
   rewrites its pidfile at every start; the copy baked into the image was never read.
 
 ### Fixed
+
+- **The `cli` variant runs a child image's early hooks.** `entrypoint.d/*.sh` under
+  `/opt/bin/container-entrypoint.d` was sourced by the web entrypoint only, so in a `cli` child a
+  `<VARIABLE>_WCMTECH_DEFAULT` did nothing, silently. The two known `cli` children worked around it by
+  sourcing this image's internal scripts by path, which is what stopped them when two of those
+  scripts were removed. The early hooks now run at the same point as in the web variants.
 
 - **Any uid can write `HOME`.** `/home/default` was `2755` to uid 1001, so an arbitrary OpenShift
   uid, a bare `-u 1000` or a `--user uid:gid` pair could not create `~/.npm`, `~/.cache` or
