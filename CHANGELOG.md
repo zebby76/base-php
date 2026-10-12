@@ -22,6 +22,18 @@ tracks PHP 8.4, and a backport rewrites its section rather than cherry-picking i
 
 ## [Unreleased]
 
+## [8.5.11]
+
+PHP 8.5.11. Most of the image changes below first reached users by moving the `8.5.10` tag, before
+this PHP release gave them a version of their own.
+
+Re-published twice on 2026-09-28 — boot hooks and the late-hook fingerprint, then the throttling
+include for child vhosts and its documentation — and once more on 2026-10-12, for
+`update-ini-directives` (a child image's own extensions), the OCI labels and the pidfile no longer
+baked in. Each moved the `8.5.11` tag to a newer commit, so an image pulled before one of those dates
+differs from one pulled after. **A persistent `/app/var` re-runs its late hooks once** after the
+2026-09-28 upgrade; see _Changed_ below.
+
 ### Added
 
 - **OCI labels.** The images carry the standard `org.opencontainers.image.*` keys — `created`,
@@ -34,23 +46,6 @@ tracks PHP 8.4, and a backport rewrites its section rather than cherry-picking i
   reached the application. A child image now runs `update-ini-directives` after its install; the
   image builds its own list with the same script. Measured on a child installing `sqlsrv`:
   `PHP_SQLSRV_LOGSEVERITY=4` was ignored before, applied and cleaned after.
-
-### Removed
-
-- **The empty `/app/var/run/supervisord.pid` shipped in the image.** supervisord creates and
-  rewrites its pidfile at every start; the copy baked into the image was never read.
-
-## [8.5.11]
-
-PHP 8.5.11. Most of the image changes below first reached users by moving the `8.5.10` tag, before
-this PHP release gave them a version of their own.
-
-Re-published twice on 2026-09-28 — boot hooks and the late-hook fingerprint, then the throttling
-include for child vhosts and its documentation. Each moved the `8.5.11` tag to a newer commit, so an
-image pulled before that date differs from one pulled after. **A persistent `/app/var` re-runs its
-late hooks once** after the upgrade; see _Changed_ below.
-
-### Added
 
 - **A child image's vhost can be throttled.** The soft-throttling zones were declared for the whole
   of nginx but enforced in the image's default server only, so a vhost added by a child image was
@@ -107,6 +102,11 @@ late hooks once** after the upgrade; see _Changed_ below.
   `entrypoint.d/` and `boot.d/`. **On upgrade, a persistent `/app/var` re-runs its late hooks once**,
   since the fingerprint changes; they are expected to be re-runnable. On an ephemeral `/app/var`
   (`emptyDir`, `tmpfs`) they already run at every start, and nothing changes.
+
+### Removed
+
+- **The empty `/app/var/run/supervisord.pid` shipped in the image.** supervisord creates and
+  rewrites its pidfile at every start; the copy baked into the image was never read.
 
 ### Fixed
 
