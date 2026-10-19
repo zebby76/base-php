@@ -22,18 +22,6 @@ tracks PHP 8.4, and a backport rewrites its section rather than cherry-picking i
 
 ## [Unreleased]
 
-### Changed
-
-- **gomplate 5.3.0, built with Go 1.27.** gomplate 5.2.0 carried dependency advisories published
-  after the VEX document was written — two HIGH (`golang.org/x/text` CVE-2026-56851,
-  `golang.org/x/net` CVE-2026-78669) and five lower — that the scan reported against
-  `/usr/bin/gomplate`. 5.3.0 ships fixed modules, and the builder follows upstream's move to
-  `golang:1.27-alpine`. Rendered configuration is byte-identical: the templates use none of what
-  5.3.0 changed (configuration-file merging, the TOML parser, new functions).
-- **The VEX document is down to one statement.** The go-git, gRPC and `x/crypto/ssh` findings are
-  fixed upstream, so their nine statements are gone; the `x/crypto/openpgp` one (GO-2026-5932, no
-  fix exists) still holds and now names `x/crypto` v0.58.0.
-
 ## [8.4.26]
 
 PHP 8.4.26. Most of the image changes below first reached users by moving the `8.4.25` tag, before
@@ -42,10 +30,10 @@ this PHP release gave them a version of their own.
 Re-published twice on 2026-09-28 — boot hooks and the late-hook fingerprint, then the throttling
 include for child vhosts and its documentation — and twice on 2026-10-12: first for
 `update-ini-directives` (a child image's own extensions), the OCI labels and the pidfile no longer
-baked in, then for the `cli` variant running a child image's early hooks. Each moved the `8.4.26`
-tag to a newer commit, so an image pulled before one of those dates differs from one pulled after.
-**A persistent `/app/var` re-runs its late hooks once** after the 2026-09-28 upgrade; see _Changed_
-below.
+baked in, then for the `cli` variant running a child image's early hooks — and once on 2026-10-19,
+for gomplate 5.3.0. Each moved the `8.4.26` tag to a newer commit, so an image pulled before one of
+those dates differs from one pulled after. **A persistent `/app/var` re-runs its late hooks once**
+after the 2026-09-28 upgrade; see _Changed_ below.
 
 ### Added
 
@@ -108,6 +96,17 @@ below.
   `make notes`, which discards anything written into them by hand; what is written here survives.
 
 ### Changed
+
+- **gomplate 5.3.0, built with Go 1.27.** gomplate 5.2.0 carried dependency advisories published
+  after the VEX document was written — two HIGH (`golang.org/x/text` CVE-2026-56851,
+  `golang.org/x/net` CVE-2026-78669) and five lower — that the scan reported against
+  `/usr/bin/gomplate`. 5.3.0 ships fixed modules, and the builder follows upstream's move to
+  `golang:1.27-alpine`. Rendered configuration is byte-identical: the templates use none of what
+  5.3.0 changed (configuration-file merging, the TOML parser, new functions).
+
+- **The VEX document is down to one statement.** The go-git, gRPC and `x/crypto/ssh` findings are
+  fixed upstream, so their nine statements are gone; the `x/crypto/openpgp` one (GO-2026-5932, no
+  fix exists) still holds and now names `x/crypto` v0.58.0.
 
 - **The late hooks' fingerprint covers their subdirectories.** A late hook commonly sources its
   steps from a directory of its own (`limesurvey.d/`, `drupal.d/`, `elasticms.d/`), and only the
